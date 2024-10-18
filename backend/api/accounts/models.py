@@ -3,7 +3,7 @@ from django.db import models
 
 # Create your models here.
 class Account(models.Model):
-    # TODO melhorar essas strings, trocar por enum: Account types e colors
+    # TODO change to enum: Account types e colors
     ACCOUNT_TYPES = [
         ('corrente', 'Corrente'),
         ('dinheiro', 'Dinheiro'),

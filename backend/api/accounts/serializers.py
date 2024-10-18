@@ -17,5 +17,5 @@ class AccountSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data.get('is_archived') and data.get('include_calc', True):
             raise serializers.ValidationError(
-                "include_calc só pode ser True se is_archived for False.")
+                "Não é permitido manter include_calc true e manter is_archived false.")
         return data

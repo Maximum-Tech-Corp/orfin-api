@@ -22,3 +22,12 @@
 - python manage.py migrate
 - python manage.py createsuperuser --username="admin" --email=""
 ```
+
+## For Debbuging
+
+Use this as a breakpoint into the code and run it
+
+```
+import pdb
+pdb.set_trace()
+```
