@@ -23,9 +23,9 @@
 - python manage.py createsuperuser --username="admin" --email=""
 ```
 
-## For Debbuging
+## For debugging
 
-Use this as a breakpoint into the code and run it
+Use this as a breakpoint into the code and run server or test
 
 ```
 import pdb
