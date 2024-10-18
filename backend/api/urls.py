@@ -1,9 +1,11 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework import routers
 
-from backend.api import views as v
+from .views import AccountViewSet
 
-# from .views import CourseAPIView, RatingAPIView
+router = routers.DefaultRouter()
+router.register(r'accounts', AccountViewSet)
 
-app_name = 'api'
-
-urlpatterns = []
+urlpatterns = [
+    path('', include(router.urls)),
+]

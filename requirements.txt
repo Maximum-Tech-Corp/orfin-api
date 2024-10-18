@@ -6,3 +6,6 @@ django-filter==24.3
 djangorestframework>=3.15.2,<3.16
 psycopg2-binary>=2.9.9,<2.10 #in production compile all the libs necessary and use psycopg2 lib
 Markdown==3.7
+
+# For Development
+django-seed==0.3.1 # python manage.py seed api --number=15
