@@ -56,3 +56,15 @@ class AccountTestCase(TestCase):
             f'/api/v1/accounts/{account.id}/')  # type: ignore
         self.assertEqual(response.status_code,
                          status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_archive_account_sets_include_calc_false(self):
+        account = Account.objects.create(**self.valid_payload)
+        self.assertTrue(account.include_calc)  # verify initial state
+
+        account.is_archived = True
+        account.save()
+
+        # Refresh from database and verify include_calc was set to False
+        account.refresh_from_db()
+        self.assertFalse(account.include_calc)
+        self.assertTrue(account.is_archived)

@@ -1,7 +1,7 @@
 ![Alt text](https://raw.githubusercontent.com/diegoMasin/landing-maximumtech/master/assets/img/new-logo-mt-01.png)
 <br><br>
 
-# Orfin Django Backend
+# Orfin Django API ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
 ###### Personal and family financial management system
 
@@ -9,7 +9,7 @@
 
 - Python 3.11.0
 
-## Install project anually
+## Install project manually
 
 ```
 - clone this repository
@@ -31,3 +31,12 @@ Use this as a breakpoint into the code and run server or test
 import pdb
 pdb.set_trace()
 ```
+
+## Some utils internal commands/tasks
+
+- python manage.py restart_db (Drop all the database tables and create them)
+- python manage.py test (Run all unit tests)
+- coverage run manage.py test (Run all unit tests with coverage)
+- coverage report -m (Show coverage report)
+- python contrib/update_coverage.py (Update readme with coverage)
+- python manage.py seed api --number=15 (Run seed; --number defines how much things will be created per model)
