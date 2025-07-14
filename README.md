@@ -36,4 +36,6 @@ pdb.set_trace()
 
 - python manage.py restart_db (Drop all the database tables and create them)
 - python manage.py test (Run all unit tests)
+- coverage run manage.py test (Run all unit tests with coverage)
+- coverage report -m (Show coverage report)
 - python manage.py seed api --number=15 (Run seed; --number defines how much things will be created per model)
