@@ -9,7 +9,7 @@
 
 - Python 3.11.0
 
-## Install project anually
+## Install project manually
 
 ```
 - clone this repository
@@ -31,3 +31,9 @@ Use this as a breakpoint into the code and run server or test
 import pdb
 pdb.set_trace()
 ```
+
+## Some utils internal commands/tasks
+
+- python manage.py restart_db (Drop all the database tables and create them)
+- python manage.py test (Run all unit tests)
+- python manage.py seed api --number=15 (Run seed; --number defines how much things will be created per model)
