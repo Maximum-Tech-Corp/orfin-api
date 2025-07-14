@@ -5,6 +5,8 @@
 
 ###### Personal and family financial management system
 
+![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+
 ## Requirements
 
 - Python 3.11.0
@@ -38,4 +40,5 @@ pdb.set_trace()
 - python manage.py test (Run all unit tests)
 - coverage run manage.py test (Run all unit tests with coverage)
 - coverage report -m (Show coverage report)
+- python contrib/update_coverage.py (Update readme with coverage)
 - python manage.py seed api --number=15 (Run seed; --number defines how much things will be created per model)
