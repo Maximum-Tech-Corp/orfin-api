@@ -1,11 +1,9 @@
 ![Alt text](https://raw.githubusercontent.com/diegoMasin/landing-maximumtech/master/assets/img/new-logo-mt-01.png)
 <br><br>
 
-# Orfin Django Backend
+# Orfin Django API ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
 ###### Personal and family financial management system
-
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
 ## Requirements
 
