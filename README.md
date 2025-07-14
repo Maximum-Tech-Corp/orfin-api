@@ -1,5 +1,4 @@
 ![Alt text](https://raw.githubusercontent.com/diegoMasin/landing-maximumtech/master/assets/img/new-logo-mt-01.png)
-<br><br>
 
 # Orfin Django API ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
