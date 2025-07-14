@@ -34,9 +34,19 @@ jobs:
 
       - name: Run Tests
         env:
+          DJANGO_SETTINGS_MODULE: backend.settings
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/github_actions
           SECRET_KEY: testing_key
+          DEBUG: "True"
+          ALLOWED_HOSTS: "localhost,127.0.0.1"
+          DB_NAME: github_actions
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_HOST: localhost
+          DB_PORT: 5432
         run: |
+          python manage.py makemigrations
+          python manage.py migrate
           python manage.py test
           coverage run manage.py test
           coverage report --fail-under=90
