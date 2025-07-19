@@ -240,7 +240,7 @@ class CategoryTestCase(TestCase):
 
     def test_delete_category_archives_instead(self):
         """
-        Testa que delete arquiva a categoria ao invés de deletar.
+        Testa a action delete definir is_archieved na categoria ao invés de deleta-la.
         """
         category = Category.objects.create(**self.valid_payload)
 
@@ -252,6 +252,37 @@ class CategoryTestCase(TestCase):
         # Verifica se a categoria foi arquivada
         category.refresh_from_db()
         self.assertTrue(category.is_archived)
+
+    def test_delete_category_archives_subcategories(self):
+        """
+        Testa que ao arquivar uma categoria, suas subcategorias também são arquivadas.
+        """
+        # Cria categoria pai
+        parent_category = Category.objects.create(**self.valid_payload)
+
+        # Cria algumas subcategorias
+        subcategory_payload = self.valid_payload.copy()
+        subcategory_payload.update({
+            'name': 'Subcategoria 1',
+            'subcategory': parent_category
+        })
+        subcategory1 = Category.objects.create(**subcategory_payload)
+
+        subcategory_payload['name'] = 'Subcategoria 2'
+        subcategory2 = Category.objects.create(**subcategory_payload)
+
+        # Arquiva a categoria pai
+        response = self.client.delete(
+            f'/api/v1/categories/{parent_category.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('subcategorias', response.json().get('detail'))
+
+        # Verifica se as subcategorias foram arquivadas
+        subcategory1.refresh_from_db()
+        subcategory2.refresh_from_db()
+        self.assertTrue(subcategory1.is_archived)
+        self.assertTrue(subcategory2.is_archived)
 
     def test_delete_nonexistent_category(self):
         """

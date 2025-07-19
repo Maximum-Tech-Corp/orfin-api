@@ -39,14 +39,24 @@ class CategoryViewSet(viewsets.ModelViewSet):
         """
         Sobrescreve o método destroy para implementar soft delete.
         Arquiva a categoria ao invés de deletá-la fisicamente.
+        Arquiva também as categorias filhas.
         """
         try:
+            # Arquiva a categoria
             category = self.get_object()
             category.is_archived = True
             category.save()
 
+            # Procura por categorias filhas e as arquiva também
+            subcategories = Category.objects.filter(subcategory=category.id)
+            if subcategories.exists():
+                subcategories.update(is_archived=True)
+                message = "Categoria e suas subcategorias foram arquivadas com sucesso."
+            else:
+                message = "Categoria arquivada com sucesso."
+
             return Response(
-                {"detail": "Categoria arquivada com sucesso."},
+                {"detail": message},
                 status=status.HTTP_200_OK
             )
         except Exception:
