@@ -1,0 +1,43 @@
+from django.db import models
+
+
+class Category(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=50, unique=True)
+    color = models.CharField(max_length=7)  # Formato hex: #RRGGBB
+    icon = models.CharField(max_length=20)
+    is_archived = models.BooleanField(default=False)
+    # Self-referencing para criar hierarquia de categorias
+    subcategory = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='parent_categories'
+    )
+
+    def delete(self, *args, **kwargs):
+        """
+        Previne exclusão física de categorias.
+        Categorias devem ser arquivadas ao invés de deletadas.
+        """
+        raise NotImplementedError("Não é permitido deletar categorias.")
+
+    def __str__(self):
+        if self.subcategory:
+            hierarchy = []
+            parent = self.subcategory
+            while parent:
+                hierarchy.append(parent.name)
+                parent = parent.subcategory
+            hierarchy.reverse()
+            hierarchy.append(self.name)
+            return " > ".join(hierarchy)
+        return self.name
+
+    class Meta:
+        db_table = 'category'
+        verbose_name = 'Categoria'
+        verbose_name_plural = 'Categorias'
+        # Garante que não haja categorias com nomes duplicados no mesmo nível
+        unique_together = ['name', 'subcategory']
