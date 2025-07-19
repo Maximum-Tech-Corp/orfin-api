@@ -16,25 +16,22 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Filtra categorias baseado em parâmetros de query.
-        Por padrão, exclui categorias arquivadas.
+        Filtros do GET:
+        Por padrão, mostra todas as categorias ativas
         """
         queryset = Category.objects.all()
 
-        # Filtro para mostrar/ocultar categorias arquivadas
-        show_archived = self.request.GET.get('show_archived', 'false')
-        if show_archived.lower() != 'true':
-            queryset = queryset.filter(is_archived=False)
-
-        # Filtro para mostrar apenas categorias arquivadas
+        # Se houver parâmetro 'only_archived'=true, retorna somente as arquivadas
         only_archived = self.request.GET.get('only_archived', 'false')
         if only_archived.lower() == 'true':
             queryset = queryset.filter(is_archived=True)
+        else:
+            queryset = queryset.filter(is_archived=False)
 
-        # Filtro para mostrar apenas categorias principais (sem subcategoria)
-        main_only = self.request.GET.get('main_only', 'false')
-        if main_only.lower() == 'true':
-            queryset = queryset.filter(subcategory__isnull=True)
+        # Se houver parâmetro 'name', filtra por nome
+        name = self.request.GET.get('name', None)
+        if name:
+            queryset = queryset.filter(name__icontains=name)
 
         return queryset.order_by('name')
 

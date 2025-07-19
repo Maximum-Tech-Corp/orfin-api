@@ -174,11 +174,11 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get('name'), 'Alimentação Atualizada')
         self.assertEqual(response.json().get('color'), '#FF0000')
 
-    def test_list_categories_exclude_archived(self):
+    def test_list_categories_default_categories_actived(self):
         """
-        Testa listagem de categorias excluindo arquivadas por padrão.
+        Testa listagem de categorias padrão.
         """
-        # Cria categoria normal
+        # Cria categoria ativa
         Category.objects.create(**self.valid_payload)
 
         # Cria categoria arquivada
@@ -195,14 +195,14 @@ class CategoryTestCase(TestCase):
         # Deve retornar apenas 2 categorias (main_category + nova)
         self.assertEqual(len(response.json().get('results')), 2)
 
-    def test_list_categories_include_archived(self):
+    def test_list_categories_only_by_name(self):
         """
-        Testa listagem de categorias incluindo arquivadas.
+        Testa listagem de categorias por nome
         """
-        # Cria categoria normal
+        # Cria categoria ativa
         Category.objects.create(**self.valid_payload)
 
-        # Cria categoria arquivada
+        # Cria categoria arquivada, com mesmo nome da ativa
         archived_payload = self.valid_payload.copy()
         archived_payload.update({
             'name': 'Arquivada',
@@ -210,17 +210,17 @@ class CategoryTestCase(TestCase):
         })
         Category.objects.create(**archived_payload)
 
-        response = self.client.get('/api/v1/categories/?show_archived=true')
+        response = self.client.get('/api/v1/categories/?name=Aliment')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Deve retornar todas as 3 categorias
-        self.assertEqual(len(response.json().get('results')), 3)
+        # Deve retornar apenas 1 categoria, a ativa
+        self.assertEqual(len(response.json().get('results')), 1)
 
     def test_list_categories_only_archived(self):
         """
         Testa listagem de categorias mostrando somente arquivadas.
         """
-        # Cria categoria normal
+        # Cria categoria ativa
         Category.objects.create(**self.valid_payload)
 
         # Cria categoria arquivada
@@ -232,32 +232,11 @@ class CategoryTestCase(TestCase):
         Category.objects.create(**archived_payload)
 
         response = self.client.get(
-            '/api/v1/categories/?show_archived=true&only_archived=true')
+            '/api/v1/categories/?only_archived=true')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Deve retornar todas as 1 categorias
         self.assertEqual(len(response.json().get('results')), 1)
-
-    def test_list_main_categories_only(self):
-        """
-        Testa listagem apenas de categorias principais.
-        """
-        # Cria categoria principal
-        Category.objects.create(**self.valid_payload)
-
-        # Cria subcategoria
-        subcategory_payload = self.valid_payload.copy()
-        subcategory_payload.update({
-            'name': 'Subcategoria',
-            'subcategory': self.main_category
-        })
-        Category.objects.create(**subcategory_payload)
-
-        response = self.client.get('/api/v1/categories/?main_only=true')
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Deve retornar apenas categorias principais (2)
-        self.assertEqual(len(response.json().get('results')), 2)
 
     def test_delete_category_archives_instead(self):
         """
