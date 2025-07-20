@@ -190,6 +190,37 @@ class CategoryTestCase(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_cannot_create_nested_subcategory(self):
+        """
+        Testa que não é possível criar uma subcategoria de outra subcategoria.
+        """
+
+        # Cria primeira subcategoria
+        first_subcategory_payload = self.valid_payload.copy()
+        first_subcategory_payload.update({
+            'subcategory': self.main_category
+        })
+
+        first_subcategory_payload = Category.objects.create(
+            **first_subcategory_payload)
+        first_subcategory_payload.refresh_from_db()
+
+        # Tenta criar subcategoria da subcategoria
+        second_subcategory_payload = self.valid_payload.copy()
+        second_subcategory_payload.update({
+            'name': 'Combustível',
+            'subcategory': first_subcategory_payload.id
+        })
+
+        response = self.client.post(
+            '/api/v1/categories/',
+            second_subcategory_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('subcategory', response.json()['error'])
+
     def test_update_category_success(self):
         """
         Testa atualização de categoria com dados válidos.
@@ -214,22 +245,63 @@ class CategoryTestCase(TestCase):
         """
         Testa que não é possível atualizar categoria para ter nome duplicado no mesmo nível.
         """
-        # Cria duas categorias
-        category1 = Category.objects.create(**self.valid_payload)
 
-        other_payload = self.valid_payload.copy()
-        other_payload['name'] = 'Outro Nome'
-        category2 = Category.objects.create(**other_payload)
+        # Cria primeira subcategoria
+        first_subcategory_payload = self.valid_payload.copy()
+        first_subcategory_payload.update({
+            'subcategory': self.main_category
+        })
+
+        first_subcategory_payload = Category.objects.create(
+            **first_subcategory_payload)
+        first_subcategory_payload.refresh_from_db()
+
+        # Tenta criar subcategoria da subcategoria
+        second_subcategory_payload = self.valid_payload.copy()
+        second_subcategory_payload.update({
+            'name': 'Combustível',
+            'subcategory': self.main_category
+        })
+
+        second_subcategory_payload = Category.objects.create(
+            **second_subcategory_payload)
+        second_subcategory_payload.refresh_from_db()
 
         # Tenta atualizar category2 para ter o mesmo nome de category1
-        update_payload = {'name': category1.name}
+        update_payload = {'subcategory': first_subcategory_payload.id}
         response = self.client.patch(
-            f'/api/v1/categories/{category2.id}/',
+            f'/api/v1/categories/{second_subcategory_payload.id}/',
             update_payload,
             format='json'
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cannot_update_to_nested_subcategory(self):
+        """
+        Testa que não é possível atualizar uma categoria para ser subcategoria de uma subcategoria.
+        """
+        # Cria primeira subcategoria
+        subcategory = Category.objects.create(
+            name='Subcategoria',
+            color='#33FF57',
+            icon='sub',
+            subcategory=self.main_category
+        )
+
+        # Cria categoria para tentar transformar em sub-subcategoria
+        category = Category.objects.create(**self.valid_payload)
+
+        # Tenta atualizar para ser subcategoria da subcategoria
+        update_payload = {'subcategory': subcategory.id}
+        response = self.client.patch(
+            f'/api/v1/categories/{category.id}/',
+            update_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('subcategory', response.json()['error'])
 
     def test_list_categories_default_categories_actived(self):
         """

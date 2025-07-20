@@ -20,6 +20,7 @@ class Category(models.Model):
     def clean(self):
         """
         Valida se já existe categoria com mesmo nome e mesma subcategoria.
+        Validação também mantem o nível máximo de subcategorias em 1.
         """
         existing = Category.objects.filter(
             name=self.name,
@@ -32,6 +33,11 @@ class Category(models.Model):
         if existing.exists():
             raise ValidationError({
                 'name': 'Já existe este nome de categoria. Use outro nome ou escolha outra categoria pai.'
+            })
+
+        if self.subcategory and self.subcategory.subcategory:
+            raise ValidationError({
+                'subcategory': 'Não é permitido ter mais de um nível de subcategoria.'
             })
 
     def save(self, *args, **kwargs):
