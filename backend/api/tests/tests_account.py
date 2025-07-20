@@ -34,6 +34,68 @@ class AccountTestCase(TestCase):
         self.assertEqual(response.json()[
                          'non_field_errors'][0], 'Não é permitido manter include_calc true e manter is_archived false.')
 
+    def test_list_accounts_default_active(self):
+        """
+        Testa listagem de contas padrão.
+        """
+        # Cria conta ativa
+        Account.objects.create(**self.valid_payload)
+
+        # Cria conta arquivada
+        archived_payload = self.valid_payload.copy()
+        archived_payload.update({
+            'name': 'Arquivada',
+            'is_archived': True
+        })
+        Account.objects.create(**archived_payload)
+
+        response = self.client.get('/api/v1/accounts/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Deve retornar apenas 1 conta ativa
+        self.assertEqual(len(response.json().get('results')), 1)
+
+    def test_list_accounts_only_archived(self):
+        """
+        Testa listagem de contas arquivadas.
+        """
+        # Cria conta ativa
+        Account.objects.create(**self.valid_payload)
+
+        # Cria conta arquivada
+        archived_payload = self.valid_payload.copy()
+        archived_payload.update({
+            'name': 'Arquivada',
+            'is_archived': True
+        })
+        Account.objects.create(**archived_payload)
+
+        response = self.client.get('/api/v1/accounts/?only_archived=true')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Deve retornar apenas 1 conta arquivada
+        self.assertEqual(len(response.json().get('results')), 1)
+
+    def test_list_accounts_only_by_name(self):
+        """
+        Testa listagem de contas por nome
+        """
+        # Cria conta ativa
+        Account.objects.create(**self.valid_payload)
+
+        # Cria outra conta
+        archived_payload = self.valid_payload.copy()
+        archived_payload.update({
+            'name': 'Meus investimentos',
+        })
+        Account.objects.create(**archived_payload)
+
+        response = self.client.get('/api/v1/accounts/?name=Corrente')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Deve retornar apenas 1 conta, a ativa
+        self.assertEqual(len(response.json().get('results')), 1)
+
     def test_update_account(self):
         account = Account.objects.create(**self.valid_payload)
         update_payload = {'name': 'Conta Atualizada'}
@@ -50,12 +112,28 @@ class AccountTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('balance', response.json())
 
-    def test_delete_account(self):
+    def test_delete_nonexistent_account(self):
+        """
+        Testa delete de conta inexistente.
+        """
+        response = self.client.delete('/api/v1/accounts/999/')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_account_archives_instead(self):
+        """
+        Testa a action delete definir is_archived na conta ao invés de deleta-la.
+        """
         account = Account.objects.create(**self.valid_payload)
-        response = self.client.delete(
-            f'/api/v1/accounts/{account.id}/')  # type: ignore
-        self.assertEqual(response.status_code,
-                         status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        response = self.client.delete(f'/api/v1/accounts/{account.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('arquivada', response.json().get('detail'))
+
+        # Verifica se a conta foi arquivada
+        account.refresh_from_db()
+        self.assertTrue(account.is_archived)
 
     def test_archive_account_sets_include_calc_false(self):
         account = Account.objects.create(**self.valid_payload)
