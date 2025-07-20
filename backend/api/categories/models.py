@@ -1,9 +1,10 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
 class Category(models.Model):
     id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=50)
     color = models.CharField(max_length=7)  # Formato hex: #RRGGBB
     icon = models.CharField(max_length=20)
     is_archived = models.BooleanField(default=False)
@@ -16,10 +17,31 @@ class Category(models.Model):
         related_name='parent_categories'
     )
 
+    def clean(self):
+        """
+        Valida se já existe categoria com mesmo nome e mesma subcategoria.
+        """
+        existing = Category.objects.filter(
+            name=self.name,
+            subcategory=self.subcategory
+        )
+
+        if self.pk:  # Se for update, exclui o próprio registro da validação
+            existing = existing.exclude(pk=self.pk)
+
+        if existing.exists():
+            raise ValidationError({
+                'name': 'Já existe este nome de categoria. Use outro nome ou escolha outra categoria pai.'
+            })
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
+
     def delete(self, *args, **kwargs):
         """
-        Previne exclusão física de categorias.
-        Categorias devem ser arquivadas ao invés de deletadas.
+        Previne exclusão física de categorias. 
+        Na view Destroy, arquivamos ao invés de deleta-las.
         """
         raise NotImplementedError("Não é permitido deletar categorias.")
 

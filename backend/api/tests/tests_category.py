@@ -46,7 +46,7 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get('name'), 'Alimentação')
         self.assertEqual(response.json().get('color'), '#FF5733')
 
-    def test_create_category_invalid_color_format(self):
+    def test_cannot_create_category_invalid_color_format(self):
         """
         Testa criação de categoria com formato de cor inválido.
         """
@@ -62,7 +62,7 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('color', response.json())
 
-    def test_create_category_invalid_color_length(self):
+    def test_cannot_create_category_invalid_color_length(self):
         """
         Testa criação de categoria com cor de comprimento inválido.
         """
@@ -78,7 +78,7 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('color', response.json())
 
-    def test_create_category_invalid_color_hex(self):
+    def test_cannot_create_category_invalid_color_hex(self):
         """
         Testa criação de categoria com cor de contendo hexadecimal inválido.
         """
@@ -94,7 +94,7 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('color', response.json())
 
-    def test_create_category_empty_name(self):
+    def test_cannot_create_category_empty_name(self):
         """
         Testa criação de categoria com nome vazio.
         """
@@ -130,7 +130,7 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get(
             'subcategory'), self.main_category.id)
 
-    def test_create_subcategory_circular_reference(self):
+    def test_cannot_create_subcategory_circular_reference(self):
         """
         Testa prevenção de referência circular em subcategorias.
         """
@@ -154,6 +154,42 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('subcategory', response.json())
 
+    def test_cannot_create_duplicate_category_same_level(self):
+        """
+        Testa que não é possível criar categorias com mesmo nome no mesmo nível hierárquico.
+        """
+        # Cria primeira categoria (sem subcategoria)
+        Category.objects.create(**self.valid_payload)
+
+        # Tenta criar outra categoria com mesmo nome e sem subcategoria
+        response = self.client.post(
+            '/api/v1/categories/',
+            self.valid_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
+
+    def test_can_create_duplicate_category_different_levels(self):
+        """
+        Testa que é possível criar categorias com mesmo nome em níveis hierárquicos diferentes.
+        """
+        # Cria primeira categoria (sem subcategoria)
+        Category.objects.create(**self.valid_payload)
+
+        # Cria segunda categoria com mesmo nome, mas como subcategoria
+        duplicate_payload = self.valid_payload.copy()
+        duplicate_payload['subcategory'] = self.main_category.id
+
+        response = self.client.post(
+            '/api/v1/categories/',
+            duplicate_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
     def test_update_category_success(self):
         """
         Testa atualização de categoria com dados válidos.
@@ -173,6 +209,27 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json().get('name'), 'Alimentação Atualizada')
         self.assertEqual(response.json().get('color'), '#FF0000')
+
+    def test_can_update_category_duplicate_name_same_level(self):
+        """
+        Testa que não é possível atualizar categoria para ter nome duplicado no mesmo nível.
+        """
+        # Cria duas categorias
+        category1 = Category.objects.create(**self.valid_payload)
+
+        other_payload = self.valid_payload.copy()
+        other_payload['name'] = 'Outro Nome'
+        category2 = Category.objects.create(**other_payload)
+
+        # Tenta atualizar category2 para ter o mesmo nome de category1
+        update_payload = {'name': category1.name}
+        response = self.client.patch(
+            f'/api/v1/categories/{category2.id}/',
+            update_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_categories_default_categories_actived(self):
         """
@@ -253,7 +310,7 @@ class CategoryTestCase(TestCase):
         category.refresh_from_db()
         self.assertTrue(category.is_archived)
 
-    def test_delete_category_archives_subcategories(self):
+    def test_when_archiving_category_archives_subcategories(self):
         """
         Testa que ao arquivar uma categoria, suas subcategorias também são arquivadas.
         """
