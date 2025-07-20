@@ -6,7 +6,18 @@
     "configurations": [
         
         {
-            "name": "Python Debugger: Django",
+            "name": "Django Test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/manage.py",
+            "args": [
+                "test"
+            ],
+            "django": true
+        },
+        
+        {
+            "name": "Django Run",
             "type": "debugpy",
             "request": "launch",
             "args": [
