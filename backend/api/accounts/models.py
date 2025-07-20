@@ -1,7 +1,6 @@
 from django.db import models
 
 
-# Create your models here.
 class Account(models.Model):
     # TODO change to enum: Account types e colors
     ACCOUNT_TYPES = [
@@ -21,6 +20,7 @@ class Account(models.Model):
         ('#00FFFF', 'Cyan'),
     ]
 
+    id = models.AutoField(primary_key=True)
     bank_name = models.CharField(max_length=30)
     name = models.CharField(max_length=50)
     description = models.TextField(max_length=200, blank=True, null=True)
@@ -40,3 +40,5 @@ class Account(models.Model):
 
     class Meta:
         db_table = 'account'
+        verbose_name = 'Conta'
+        verbose_name_plural = 'Contas'
