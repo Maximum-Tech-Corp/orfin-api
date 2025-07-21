@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -54,6 +56,10 @@ class AccountViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         if 'balance' in request.data:
-            raise ValidationError(
-                {'balance': 'Não é permitido alterar o saldo da conta.'})
+            current_account = self.get_object()
+            request_balance = Decimal(str(request.data['balance']))
+
+            if current_account.balance != request_balance:
+                raise ValidationError(
+                    {'balance': 'Não é permitido alterar o saldo da conta.'})
         return super().update(request, *args, **kwargs)
