@@ -22,6 +22,7 @@
         "reportUnknownParameterType": "none"
     },
     "python.defaultInterpreterPath": "./venv/bin/python",
+    "python.terminal.activateEnvironment": true,
     "python.analysis.typeCheckingMode": "basic",
 
     // Code Runner - install this extension for VS Code
