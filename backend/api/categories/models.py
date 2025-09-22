@@ -17,6 +17,10 @@ class Category(models.Model):
         related_name='parent_categories'
     )
 
+    # Campos de auditoria
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     def clean(self):
         """
         Valida se já existe categoria com mesmo nome e mesma subcategoria.
