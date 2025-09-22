@@ -24,6 +24,8 @@ class AccountTestCase(TestCase):
             '/api/v1/accounts/', self.valid_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Account.objects.count(), 1)
+        self.assertEqual(str(Account.objects.first()),
+                         "Minha Conta Corrente - Banco do Brasil")
 
     def test_create_account_invalid_include_calc(self):
         payload = self.valid_payload.copy()
