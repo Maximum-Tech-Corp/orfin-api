@@ -30,6 +30,10 @@ class Account(models.Model):
     balance = models.DecimalField(max_digits=10, decimal_places=2)
     is_archived = models.BooleanField(default=False)
 
+    # Campos de auditoria
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     def save(self, *args, **kwargs):
         if self.is_archived:
             self.include_calc = False
@@ -37,6 +41,9 @@ class Account(models.Model):
 
     def delete(self, *args, **kwargs):
         raise NotImplementedError("Não é permitido deletar contas.")
+
+    def __str__(self):
+        return f"{self.name} - {self.bank_name}"
 
     class Meta:
         db_table = 'account'
