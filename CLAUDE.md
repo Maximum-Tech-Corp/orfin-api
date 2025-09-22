@@ -202,4 +202,4 @@ Então executar servidor ou testes normalmente - a execução pausará no breakp
 - Sempre sugerir código com boas práticas, performance e segurança
 - Os códigos gerados devem ter comentários explicando seu propósito ou relações em português, principalmente acima dos métodos.
 - Se necessário uso de lib externas, durante geração de código, explique os passos necessários de instalação e uso.
-- Para cada modelo criado na api sugira sempre todos os arquivos básicos: models, serializers, views, urls, arquivos de testes e outras alterações ou criações necessárias para o pleno funcionamento do conjunto (exemplo: settings.py, arquivos na pasta utils, core, etc)
+- Para cada modelo criado na api sugira sempre todos os arquivos básicos: models, serializers, views, urls, arquivos de testes, alteração/atualização no arquivo de seed (backend/api/management/commands/seed_data.py) e outras alterações ou criações necessárias para o pleno funcionamento do conjunto (exemplo: settings.py, arquivos na pasta utils, core, etc)
