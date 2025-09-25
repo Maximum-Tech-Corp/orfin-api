@@ -82,11 +82,14 @@ python manage.py seed_data
 
 **User Model** (`backend.api.users.models.User`)
 
-- Estende o AbstractUser do Django
+- Estende o AbstractUser do Django com UserManager customizado
 - Autenticação baseada em email (sem username)
 - Validação de CPF brasileiro com dígitos verificadores
-- Campos obrigatórios: first_name, social_name, email, cpf
+- Campos obrigatórios: first_name, last_name, social_name, email, cpf
+- Campos opcionais: phone
 - Tabela personalizada: `auth_user_custom`
+- Soft deletion implementada (impedindo exclusão física)
+- Métodos auxiliares: get_full_name(), get_display_name(), soft_delete()
 
 **Account Model** (`backend.api.accounts.models.Account`)
 
@@ -107,10 +110,27 @@ python manage.py seed_data
 ### Estrutura da API
 
 - URL base: `/api/v1/`
-- Endpoints RESTful para contas e categorias
-- Manipulador de exceção personalizado para Django ValidationError
+- Endpoints RESTful para usuários, contas e categorias
+- Sistema de autenticação JWT com refresh tokens
+- Manipulador de exceção personalizado para Django ValidationError em `backend.api.core.handlers`
 - Paginação habilitada (10 itens por página)
 - Mensagens de erro em português e localização
+
+### Sistema de Autenticação e Usuários
+
+**Endpoints de Autenticação (`/api/v1/auth/`):**
+
+- `POST /register/` - Registro de novo usuário
+- `POST /login/` - Login do usuário
+- `POST /token/` - Obter token JWT
+- `POST /token/refresh/` - Refresh do token JWT
+
+**Endpoints de Perfil:**
+
+- `GET/PUT /profile/` - Gerenciamento completo do perfil
+- `GET /me/` - Resumo do perfil do usuário
+- `POST /change-password/` - Alteração de senha
+- `POST /deactivate/` - Desativação da conta
 
 ## Padrões e Convenções de Código
 
@@ -137,19 +157,26 @@ python manage.py seed_data
 ### Estrutura de Testes
 
 - Testes localizados em `backend/api/tests/`
-- Arquivos de teste separados por modelo: `tests_account.py`, `tests_category.py`
+- Arquivos de teste separados por funcionalidade: `tests_user.py`, `tests_account.py`, `tests_category.py`, `tests_validators.py`
+- Classe base `BaseTestCase` em `backend/api/tests/base.py` com utilitários comuns
+- Constantes de teste centralizadas em `backend/api/tests/constants.py`
 - Requisito de 90% de cobertura de testes aplicado no CI/CD
 
 ### Executando Testes Específicos
 
 ```bash
 # Executar arquivo de teste específico
+python manage.py test backend.api.tests.tests_user
 python manage.py test backend.api.tests.tests_account
+python manage.py test backend.api.tests.tests_category
+python manage.py test backend.api.tests.tests_validators
 
 # Executar classe de teste específica
+python manage.py test backend.api.tests.tests_user.UserModelTest
 python manage.py test backend.api.tests.tests_account.AccountModelTest
 
 # Executar método de teste específico
+python manage.py test backend.api.tests.tests_user.UserModelTest.test_user_creation
 python manage.py test backend.api.tests.tests_account.AccountModelTest.test_account_creation
 ```
 
@@ -202,4 +229,9 @@ Então executar servidor ou testes normalmente - a execução pausará no breakp
 - Sempre sugerir código com boas práticas, performance e segurança
 - Os códigos gerados devem ter comentários explicando seu propósito ou relações em português, principalmente acima dos métodos.
 - Se necessário uso de lib externas, durante geração de código, explique os passos necessários de instalação e uso.
-- Para cada modelo criado na api sugira sempre todos os arquivos básicos: models, serializers, views, urls, arquivos de testes, alteração/atualização no arquivo de seed (backend/api/management/commands/seed_data.py) e outras alterações ou criações necessárias para o pleno funcionamento do conjunto (exemplo: settings.py, arquivos na pasta utils, core, etc)
+- Para cada modelo que solicitar geração de código nesta API sugira sempre todos os arquivos básicos (criação ou edição): models, serializers, views, urls, arquivos de testes, alteração/atualização no arquivo de seed (backend/api/management/commands/seed_data.py) e outras alterações ou criações necessárias para o pleno funcionamento do conjunto (exemplo: settings.py, arquivos na pasta utils, core, etc)
+- A arquitetura segue o padrão de organização por funcionalidade/domínio (users, accounts, categories) ao invés de por tipo de arquivo
+- Cada app possui sua própria estrutura completa: models.py, serializers.py, views.py, urls.py
+- Utilitários compartilhados ficam em backend/api/utils/ (ex: validators.py)
+- Handlers personalizados ficam em backend/api/core/handlers/ (ex: exception_handler.py)
+- O modelo User é o modelo de autenticação customizado do sistema e substitui o User padrão do Django
