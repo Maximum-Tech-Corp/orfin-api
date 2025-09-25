@@ -3,9 +3,9 @@ from rest_framework.serializers import ValidationError
 
 def validate_cpf(cpf):
     """
-    Validates CPF using check digits algorithm.
-    Returns clean CPF (only numbers) if valid.
-    Raises ValidationError if invalid.
+    Validação de CPF usando o algoritmo de dígitos verificadores.
+    Retorna CPF (only numbers) se válido.
+    Lança ValidationError se inválido.
     """
     # Remove formatting
     cpf_clean = ''.join(filter(str.isdigit, cpf))
