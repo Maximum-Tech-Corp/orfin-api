@@ -1,30 +1,20 @@
-from django.test import TestCase
+from django.core.exceptions import ValidationError
 from rest_framework import status
-from rest_framework.test import APIClient
 
 from backend.api.categories.models import Category
 
+from .base import BaseAuthenticatedTestCase
+from .constants import VALID_HEX_COLORS, get_category_data
 
-class CategoryTestCase(TestCase):
-    """
-    Testes unitários para o modelo Category e seus endpoints.
-    """
 
+class CategoryTestCase(BaseAuthenticatedTestCase):
     def setUp(self):
-        """
-        Configuração inicial para os testes.
-        """
-        self.client = APIClient()
-        self.valid_payload = {
-            'name': 'Alimentação',
-            'color': '#FF5733',
-            'icon': 'food',
-            'is_archived': False,
-            'subcategory': None  # Inicialmente sem subcategoria
-        }
+        super().setUp()  # Chama o setUp da classe base (autentica automaticamente)
+        self.valid_payload = get_category_data()
 
         # Categoria principal para testes de subcategoria
         self.main_category = Category.objects.create(
+            user=self.user,
             name='Transporte',
             color='#33A1FF',
             icon='car',
@@ -32,9 +22,6 @@ class CategoryTestCase(TestCase):
         )
 
     def test_create_category_success(self):
-        """
-        Testa criação de categoria com dados válidos.
-        """
         response = self.client.post(
             '/api/v1/categories/',
             self.valid_payload,
@@ -47,9 +34,6 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get('color'), '#FF5733')
 
     def test_cannot_create_category_invalid_color_format(self):
-        """
-        Testa criação de categoria com formato de cor inválido.
-        """
         invalid_payload = self.valid_payload.copy()
         invalid_payload['color'] = 'FF5733'  # Sem #
 
@@ -63,9 +47,6 @@ class CategoryTestCase(TestCase):
         self.assertIn('color', response.json())
 
     def test_cannot_create_category_invalid_color_length(self):
-        """
-        Testa criação de categoria com cor de comprimento inválido.
-        """
         invalid_payload = self.valid_payload.copy()
         invalid_payload['color'] = '#FF573'  # Muito curto
 
@@ -79,9 +60,6 @@ class CategoryTestCase(TestCase):
         self.assertIn('color', response.json())
 
     def test_cannot_create_category_invalid_color_hex(self):
-        """
-        Testa criação de categoria com cor de contendo hexadecimal inválido.
-        """
         invalid_payload = self.valid_payload.copy()
         invalid_payload['color'] = '#AAAZZZ'  # Z não é hexadecimal
 
@@ -95,9 +73,6 @@ class CategoryTestCase(TestCase):
         self.assertIn('color', response.json())
 
     def test_cannot_create_category_empty_name(self):
-        """
-        Testa criação de categoria com nome vazio.
-        """
         invalid_payload = self.valid_payload.copy()
         invalid_payload['name'] = '   '  # Apenas espaços
 
@@ -111,9 +86,6 @@ class CategoryTestCase(TestCase):
         self.assertIn('name', response.json())
 
     def test_create_subcategory_success(self):
-        """
-        Testa criação de subcategoria com referência válida.
-        """
         subcategory_payload = self.valid_payload.copy()
         subcategory_payload.update({
             'name': 'Combustível',
@@ -130,10 +102,25 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get(
             'subcategory'), self.main_category.id)
 
+    def test_cannot_create_subcategory_with_different_user(self):
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
+
+        other_user = self.create_additional_user()
+        subcategory_payload = self.valid_payload.copy()
+        subcategory_payload.update({
+            'name': 'Combustível',
+            'subcategory': category,
+        })
+
+        with self.assertRaises(ValidationError) as cm:
+            Category.objects.create(user=other_user, **subcategory_payload)
+
+        self.assertIn('subcategory', cm.exception.message_dict)
+        self.assertIn('A categoria pai deve pertencer ao mesmo usuário.',
+                      cm.exception.message_dict['subcategory'])
+
     def test_cannot_create_subcategory_circular_reference(self):
-        """
-        Testa prevenção de referência circular em subcategorias.
-        """
         # Primeiro cria uma categoria
         category_data = self.valid_payload.copy()
         response = self.client.post(
@@ -155,11 +142,8 @@ class CategoryTestCase(TestCase):
         self.assertIn('subcategory', response.json())
 
     def test_cannot_create_duplicate_category_same_level(self):
-        """
-        Testa que não é possível criar categorias com mesmo nome no mesmo nível hierárquico.
-        """
         # Cria primeira categoria (sem subcategoria)
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Tenta criar outra categoria com mesmo nome e sem subcategoria
         response = self.client.post(
@@ -172,11 +156,8 @@ class CategoryTestCase(TestCase):
         self.assertIn('error', response.json())
 
     def test_can_create_duplicate_category_different_levels(self):
-        """
-        Testa que é possível criar categorias com mesmo nome em níveis hierárquicos diferentes.
-        """
         # Cria primeira categoria (sem subcategoria)
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Cria segunda categoria com mesmo nome, mas como subcategoria
         duplicate_payload = self.valid_payload.copy()
@@ -191,10 +172,6 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_cannot_create_nested_subcategory(self):
-        """
-        Testa que não é possível criar uma subcategoria de outra subcategoria.
-        """
-
         # Cria primeira subcategoria
         first_subcategory_payload = self.valid_payload.copy()
         first_subcategory_payload.update({
@@ -202,6 +179,7 @@ class CategoryTestCase(TestCase):
         })
 
         first_subcategory_payload = Category.objects.create(
+            user=self.user,
             **first_subcategory_payload)
         first_subcategory_payload.refresh_from_db()
 
@@ -222,10 +200,8 @@ class CategoryTestCase(TestCase):
         self.assertIn('subcategory', response.json()['error'])
 
     def test_update_category_success(self):
-        """
-        Testa atualização de categoria com dados válidos.
-        """
-        category = Category.objects.create(**self.valid_payload)
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
         update_payload = {
             'name': 'Alimentação Atualizada',
             'color': '#FF0000'
@@ -242,10 +218,6 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.json().get('color'), '#FF0000')
 
     def test_can_update_category_duplicate_name_same_level(self):
-        """
-        Testa que não é possível atualizar categoria para ter nome duplicado no mesmo nível.
-        """
-
         # Cria primeira subcategoria
         first_subcategory_payload = self.valid_payload.copy()
         first_subcategory_payload.update({
@@ -253,6 +225,7 @@ class CategoryTestCase(TestCase):
         })
 
         first_subcategory_payload = Category.objects.create(
+            user=self.user,
             **first_subcategory_payload)
         first_subcategory_payload.refresh_from_db()
 
@@ -264,6 +237,7 @@ class CategoryTestCase(TestCase):
         })
 
         second_subcategory_payload = Category.objects.create(
+            user=self.user,
             **second_subcategory_payload)
         second_subcategory_payload.refresh_from_db()
 
@@ -278,11 +252,9 @@ class CategoryTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_cannot_update_to_nested_subcategory(self):
-        """
-        Testa que não é possível atualizar uma categoria para ser subcategoria de uma subcategoria.
-        """
         # Cria primeira subcategoria
         subcategory = Category.objects.create(
+            user=self.user,
             name='Subcategoria',
             color='#33FF57',
             icon='sub',
@@ -290,7 +262,8 @@ class CategoryTestCase(TestCase):
         )
 
         # Cria categoria para tentar transformar em sub-subcategoria
-        category = Category.objects.create(**self.valid_payload)
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
 
         # Tenta atualizar para ser subcategoria da subcategoria
         update_payload = {'subcategory': subcategory.id}
@@ -304,11 +277,8 @@ class CategoryTestCase(TestCase):
         self.assertIn('subcategory', response.json()['error'])
 
     def test_list_categories_default_categories_actived(self):
-        """
-        Testa listagem de categorias padrão.
-        """
         # Cria categoria ativa
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Cria categoria arquivada
         archived_payload = self.valid_payload.copy()
@@ -316,7 +286,7 @@ class CategoryTestCase(TestCase):
             'name': 'Arquivada',
             'is_archived': True
         })
-        Category.objects.create(**archived_payload)
+        Category.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get('/api/v1/categories/')
 
@@ -325,11 +295,8 @@ class CategoryTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 2)
 
     def test_list_categories_only_by_name(self):
-        """
-        Testa listagem de categorias por nome
-        """
         # Cria categoria ativa
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Cria categoria arquivada, com mesmo nome da ativa
         archived_payload = self.valid_payload.copy()
@@ -337,7 +304,7 @@ class CategoryTestCase(TestCase):
             'name': 'Arquivada',
             'is_archived': True
         })
-        Category.objects.create(**archived_payload)
+        Category.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get('/api/v1/categories/?name=Aliment')
 
@@ -346,11 +313,8 @@ class CategoryTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 1)
 
     def test_list_categories_only_archived(self):
-        """
-        Testa listagem de categorias mostrando somente arquivadas.
-        """
         # Cria categoria ativa
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Cria categoria arquivada
         archived_payload = self.valid_payload.copy()
@@ -358,7 +322,7 @@ class CategoryTestCase(TestCase):
             'name': 'Arquivada',
             'is_archived': True
         })
-        Category.objects.create(**archived_payload)
+        Category.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get(
             '/api/v1/categories/?only_archived=true')
@@ -368,10 +332,8 @@ class CategoryTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 1)
 
     def test_delete_category_archives_instead(self):
-        """
-        Testa a action delete definir is_archieved na categoria ao invés de deleta-la.
-        """
-        category = Category.objects.create(**self.valid_payload)
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
 
         response = self.client.delete(f'/api/v1/categories/{category.id}/')
 
@@ -383,11 +345,9 @@ class CategoryTestCase(TestCase):
         self.assertTrue(category.is_archived)
 
     def test_when_archiving_category_archives_subcategories(self):
-        """
-        Testa que ao arquivar uma categoria, suas subcategorias também são arquivadas.
-        """
         # Cria categoria pai
-        parent_category = Category.objects.create(**self.valid_payload)
+        parent_category = Category.objects.create(
+            user=self.user, **self.valid_payload)
 
         # Cria algumas subcategorias
         subcategory_payload = self.valid_payload.copy()
@@ -395,10 +355,12 @@ class CategoryTestCase(TestCase):
             'name': 'Subcategoria 1',
             'subcategory': parent_category
         })
-        subcategory1 = Category.objects.create(**subcategory_payload)
+        subcategory1 = Category.objects.create(
+            user=self.user, **subcategory_payload)
 
         subcategory_payload['name'] = 'Subcategoria 2'
-        subcategory2 = Category.objects.create(**subcategory_payload)
+        subcategory2 = Category.objects.create(
+            user=self.user, **subcategory_payload)
 
         # Arquiva a categoria pai
         response = self.client.delete(
@@ -414,22 +376,18 @@ class CategoryTestCase(TestCase):
         self.assertTrue(subcategory2.is_archived)
 
     def test_delete_nonexistent_category(self):
-        """
-        Testa delete de categoria inexistente.
-        """
         response = self.client.delete('/api/v1/categories/999/')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_category_str_representation(self):
-        """
-        Testa representação string do modelo Category.
-        """
-        category = Category.objects.create(**self.valid_payload)
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
         self.assertEqual(str(category), 'Alimentação')
 
         # Testa representação com subcategoria
         subcategory = Category.objects.create(
+            user=self.user,
             name='Combustível',
             color='#00FF00',
             icon='gas',
@@ -438,21 +396,76 @@ class CategoryTestCase(TestCase):
         self.assertEqual(str(subcategory), 'Transporte > Combustível')
 
     def test_category_model_delete_raises_error(self):
-        """
-        Testa que o método delete do modelo levanta NotImplementedError.
-        """
-        category = Category.objects.create(**self.valid_payload)
+        category = Category.objects.create(
+            user=self.user, **self.valid_payload)
 
         with self.assertRaises(NotImplementedError):
             category.delete()
 
     def test_unique_together_constraint(self):
-        """
-        Testa restrição de unicidade por nome e subcategoria.
-        """
         # Cria primeira categoria
-        Category.objects.create(**self.valid_payload)
+        Category.objects.create(user=self.user, **self.valid_payload)
 
         # Tenta criar categoria com mesmo nome (deve falhar)
         with self.assertRaises(Exception):
-            Category.objects.create(**self.valid_payload)
+            Category.objects.create(user=self.user, **self.valid_payload)
+
+    def test_user_can_only_see_own_categories(self):
+        # Cria categoria para o usuário atual
+        Category.objects.create(user=self.user, **self.valid_payload)
+
+        # Cria outro usuário e uma categoria para ele
+        other_user = self.create_additional_user()
+        other_payload = self.valid_payload.copy()
+        other_payload['name'] = 'Categoria do Outro Usuário'
+        Category.objects.create(user=other_user, **other_payload)
+
+        # Faz requisição como usuário atual
+        response = self.client.get('/api/v1/categories/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Deve retornar apenas 2 categorias (main_category + nova)
+        self.assertEqual(len(response.json().get('results')), 2)
+
+    def test_user_cannot_access_other_user_category(self):
+        # Cria outro usuário e uma categoria para ele
+        other_user = self.create_additional_user()
+        other_payload = self.valid_payload.copy()
+        other_payload['name'] = 'Categoria do Outro Usuário'
+        other_category = Category.objects.create(
+            user=other_user, **other_payload)
+
+        # Tenta acessar categoria do outro usuário
+        response = self.client.get(f'/api/v1/categories/{other_category.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_user_cannot_use_other_user_category_as_subcategory(self):
+        # Cria outro usuário e uma categoria para ele
+        other_user = self.create_additional_user()
+        other_category = Category.objects.create(
+            user=other_user,
+            name='Categoria do Outro Usuário',
+            color='#FF0000',
+            icon='other'
+        )
+
+        # Tenta criar categoria usando categoria do outro usuário como pai
+        invalid_payload = self.valid_payload.copy()
+        invalid_payload['subcategory'] = other_category.id
+
+        response = self.client.post(
+            '/api/v1/categories/',
+            invalid_payload,
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unauthenticated_user_cannot_access_categories(self):
+        # Remove autenticação
+        self.unauthenticate()
+
+        response = self.client.get('/api/v1/categories/')
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

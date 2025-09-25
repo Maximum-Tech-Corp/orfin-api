@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -21,6 +23,12 @@ class Account(models.Model):
     ]
 
     id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='accounts',
+        verbose_name='Usuário'
+    )
     bank_name = models.CharField(max_length=30)
     name = models.CharField(max_length=50)
     description = models.TextField(max_length=200, blank=True, null=True)
@@ -30,11 +38,28 @@ class Account(models.Model):
     balance = models.DecimalField(max_digits=10, decimal_places=2)
     is_archived = models.BooleanField(default=False)
 
-    # Campos de auditoria
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def clean(self):
+        """
+        Valida se já existe conta com mesmo nome para o mesmo usuário.
+        """
+        existing = Account.objects.filter(
+            user=self.user,
+            name=self.name
+        )
+
+        if self.pk:  # Se for update, exclui o próprio registro da validação
+            existing = existing.exclude(pk=self.pk)
+
+        if existing.exists():
+            raise ValidationError({
+                'name': 'Você já possui uma conta com este nome. Use outro nome.'
+            })
+
     def save(self, *args, **kwargs):
+        self.clean()
         if self.is_archived:
             self.include_calc = False
         super().save(*args, **kwargs)
@@ -49,3 +74,5 @@ class Account(models.Model):
         db_table = 'account'
         verbose_name = 'Conta'
         verbose_name_plural = 'Contas'
+        # Garante que o usuário não tenha duas contas com o mesmo nome
+        unique_together = ['user', 'name']

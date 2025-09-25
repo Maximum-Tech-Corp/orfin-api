@@ -5,6 +5,7 @@ from faker import Faker
 
 from backend.api.accounts.models import Account
 from backend.api.categories.models import Category
+from backend.api.users.models import User
 
 
 class Command(BaseCommand):
@@ -19,8 +20,42 @@ class Command(BaseCommand):
 
         # Limpa dados existentes
         self.stdout.write('Cleaning existing data...')
-        Category.objects.all().delete()
         Account.objects.all().delete()
+        Category.objects.all().delete()
+        # User é deletado por último devido às relações
+        User.objects.filter(is_superuser=False).delete()
+
+        # Seed Users
+        self.stdout.write('Creating users...')
+        users = []
+
+        # Cria 3 usuários de teste
+        users_data = [
+            {
+                'first_name': 'Diego',
+                'last_name': 'Masin',
+                'social_name': 'Trizayfer',
+                'cpf': '60017806330',
+                'email': 'diego@email.com',
+                'phone': '11999999999'
+            },
+            {
+                'first_name': 'Cirlene',
+                'last_name': 'Souto',
+                'social_name': 'Cirlene Souto',
+                'cpf': '94859400330',
+                'email': 'cirlene@email.com',
+                'phone': '11888888888'
+            },
+        ]
+
+        for user_data in users_data:
+            user = User.objects.create_user(
+                **user_data,
+                password='senha123'
+            )
+            users.append(user)
+            self.stdout.write(f'Created user: {user.email}')
 
         # Seed Categories
         self.stdout.write('Creating categories...')
@@ -53,22 +88,26 @@ class Command(BaseCommand):
             }
         ]
 
-        for category_data in categories_data:
-            # Cria categoria principal com cor aleatória
-            main_category = Category.objects.create(
-                name=category_data['name'],
-                color=self.fake.random_element(colors),
-                icon=category_data['icon']
-            )
-
-            # Cria subcategorias
-            for subcategory_name in category_data['subcategories']:
-                Category.objects.create(
-                    name=subcategory_name,
+        # Cria categorias para cada usuário
+        for user in users:
+            for category_data in categories_data:
+                # Cria categoria principal com cor aleatória
+                main_category = Category.objects.create(
+                    user=user,
+                    name=category_data['name'],
                     color=self.fake.random_element(colors),
-                    icon=category_data['icon'],
-                    subcategory=main_category
+                    icon=category_data['icon']
                 )
+
+                # Cria subcategorias
+                for subcategory_name in category_data['subcategories']:
+                    Category.objects.create(
+                        user=user,
+                        name=subcategory_name,
+                        color=self.fake.random_element(colors),
+                        icon=category_data['icon'],
+                        subcategory=main_category
+                    )
 
         # Seed Accounts
         self.stdout.write('Creating accounts...')
@@ -77,21 +116,24 @@ class Command(BaseCommand):
         banks = ['Nubank', 'Itaú', 'Bradesco',
                  'Santander', 'Banco do Brasil', 'BTG', 'Inter']
 
-        # Cria 4 contas com dados parcialmente aleatórios
-        for _ in range(4):
-            bank = self.fake.random_element(banks)
-            account_type = self.fake.random_element(Account.ACCOUNT_TYPES)[0]
+        # Cria 2 contas para cada usuário com dados parcialmente aleatórios
+        for user in users:
+            for i in range(2):
+                bank = self.fake.random_element(banks)
+                account_type = self.fake.random_element(
+                    Account.ACCOUNT_TYPES)[0]
 
-            Account.objects.create(
-                bank_name=bank,
-                name=f'Conta {self.fake.word().capitalize()}',
-                description=self.fake.text(max_nb_chars=150),
-                account_type=account_type,
-                color=self.fake.random_element(colors),
-                balance=Decimal(str(self.fake.random.uniform(
-                    100, 15000))).quantize(Decimal('.01')),
-                include_calc=self.fake.boolean(chance_of_getting_true=80),
-                is_archived=self.fake.boolean(chance_of_getting_true=20)
-            )
+                Account.objects.create(
+                    user=user,
+                    bank_name=bank,
+                    name=f'Conta {self.fake.word().capitalize()} {i+1}',
+                    description=self.fake.text(max_nb_chars=150),
+                    account_type=account_type,
+                    color=self.fake.random_element(colors),
+                    balance=Decimal(str(self.fake.random.uniform(
+                        100, 15000))).quantize(Decimal('.01')),
+                    include_calc=self.fake.boolean(chance_of_getting_true=80),
+                    is_archived=self.fake.boolean(chance_of_getting_true=20)
+                )
 
         self.stdout.write(self.style.SUCCESS('Successfully seeded database'))

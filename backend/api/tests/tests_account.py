@@ -1,23 +1,15 @@
-from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIClient
 
 from backend.api.accounts.models import Account
 
+from .base import BaseAuthenticatedTestCase
+from .constants import get_account_data
 
-class AccountTestCase(TestCase):
+
+class AccountTestCase(BaseAuthenticatedTestCase):
     def setUp(self):
-        self.client = APIClient()
-        self.valid_payload = {
-            'bank_name': 'Banco do Brasil',
-            'name': 'Minha Conta Corrente',
-            'description': 'Conta pessoal',
-            'account_type': 'corrente',
-            'color': '#FF0000',
-            'include_calc': True,
-            'balance': '1000.00',
-            'is_archived': False,
-        }
+        super().setUp()  # Chama o setUp da classe base (autentica automaticamente)
+        self.valid_payload = get_account_data()
 
     def test_create_account(self):
         response = self.client.post(
@@ -26,6 +18,13 @@ class AccountTestCase(TestCase):
         self.assertEqual(Account.objects.count(), 1)
         self.assertEqual(str(Account.objects.first()),
                          "Minha Conta Corrente - Banco do Brasil")
+
+    def test_create_account_with_name_already_exits(self):
+        self.client.post(
+            '/api/v1/accounts/', self.valid_payload, format='json')
+        response = self.client.post(
+            '/api/v1/accounts/', self.valid_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_account_invalid_include_calc(self):
         payload = self.valid_payload.copy()
@@ -37,11 +36,7 @@ class AccountTestCase(TestCase):
                          'non_field_errors'][0], 'Não é permitido manter include_calc true e manter is_archived false.')
 
     def test_list_accounts_default_active(self):
-        """
-        Testa listagem de contas padrão.
-        """
-        # Cria conta ativa
-        Account.objects.create(**self.valid_payload)
+        Account.objects.create(user=self.user, **self.valid_payload)
 
         # Cria conta arquivada
         archived_payload = self.valid_payload.copy()
@@ -49,7 +44,7 @@ class AccountTestCase(TestCase):
             'name': 'Arquivada',
             'is_archived': True
         })
-        Account.objects.create(**archived_payload)
+        Account.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get('/api/v1/accounts/')
 
@@ -58,11 +53,8 @@ class AccountTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 1)
 
     def test_list_accounts_only_archived(self):
-        """
-        Testa listagem de contas arquivadas.
-        """
         # Cria conta ativa
-        Account.objects.create(**self.valid_payload)
+        Account.objects.create(user=self.user, **self.valid_payload)
 
         # Cria conta arquivada
         archived_payload = self.valid_payload.copy()
@@ -70,7 +62,7 @@ class AccountTestCase(TestCase):
             'name': 'Arquivada',
             'is_archived': True
         })
-        Account.objects.create(**archived_payload)
+        Account.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get('/api/v1/accounts/?only_archived=true')
 
@@ -79,18 +71,15 @@ class AccountTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 1)
 
     def test_list_accounts_only_by_name(self):
-        """
-        Testa listagem de contas por nome
-        """
         # Cria conta ativa
-        Account.objects.create(**self.valid_payload)
+        Account.objects.create(user=self.user, **self.valid_payload)
 
         # Cria outra conta
         archived_payload = self.valid_payload.copy()
         archived_payload.update({
             'name': 'Meus investimentos',
         })
-        Account.objects.create(**archived_payload)
+        Account.objects.create(user=self.user, **archived_payload)
 
         response = self.client.get('/api/v1/accounts/?name=Corrente')
 
@@ -99,7 +88,7 @@ class AccountTestCase(TestCase):
         self.assertEqual(len(response.json().get('results')), 1)
 
     def test_update_account(self):
-        account = Account.objects.create(**self.valid_payload)
+        account = Account.objects.create(user=self.user, **self.valid_payload)
         update_payload = {'name': 'Conta Atualizada'}
         response = self.client.patch(
             f'/api/v1/accounts/{account.id}/', update_payload, format='json')  # type: ignore
@@ -107,7 +96,7 @@ class AccountTestCase(TestCase):
         self.assertEqual(response.json()['name'], 'Conta Atualizada')
 
     def test_update_account_balance(self):
-        account = Account.objects.create(**self.valid_payload)
+        account = Account.objects.create(user=self.user, **self.valid_payload)
         update_payload = {'balance': 500}
         response = self.client.patch(
             f'/api/v1/accounts/{account.id}/', update_payload, format='json')  # type: ignore
@@ -115,18 +104,12 @@ class AccountTestCase(TestCase):
         self.assertIn('balance', response.json())
 
     def test_delete_nonexistent_account(self):
-        """
-        Testa delete de conta inexistente.
-        """
         response = self.client.delete('/api/v1/accounts/999/')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_account_archives_instead(self):
-        """
-        Testa a action delete definir is_archived na conta ao invés de deleta-la.
-        """
-        account = Account.objects.create(**self.valid_payload)
+        account = Account.objects.create(user=self.user, **self.valid_payload)
 
         response = self.client.delete(f'/api/v1/accounts/{account.id}/')
 
@@ -138,7 +121,7 @@ class AccountTestCase(TestCase):
         self.assertTrue(account.is_archived)
 
     def test_archive_account_sets_include_calc_false(self):
-        account = Account.objects.create(**self.valid_payload)
+        account = Account.objects.create(user=self.user, **self.valid_payload)
         self.assertTrue(account.include_calc)  # verify initial state
 
         account.is_archived = True
@@ -148,3 +131,43 @@ class AccountTestCase(TestCase):
         account.refresh_from_db()
         self.assertFalse(account.include_calc)
         self.assertTrue(account.is_archived)
+
+    def test_user_can_only_see_own_accounts(self):
+        # Cria conta para o usuário atual
+        Account.objects.create(user=self.user, **self.valid_payload)
+
+        # Cria outro usuário e uma conta para ele
+        other_user = self.create_additional_user()
+        other_payload = self.valid_payload.copy()
+        other_payload['name'] = 'Conta do Outro Usuário'
+        Account.objects.create(user=other_user, **other_payload)
+
+        # Faz requisição como usuário atual
+        response = self.client.get('/api/v1/accounts/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Deve retornar apenas 1 conta (a do usuário atual)
+        self.assertEqual(len(response.json().get('results')), 1)
+        self.assertEqual(response.json().get('results')[
+                         0]['name'], 'Minha Conta Corrente')
+
+    def test_user_cannot_access_other_user_account(self):
+        # Cria outro usuário e uma conta para ele
+        other_user = self.create_additional_user()
+        other_payload = self.valid_payload.copy()
+        other_payload['name'] = 'Conta do Outro Usuário'
+        other_account = Account.objects.create(
+            user=other_user, **other_payload)
+
+        # Tenta acessar conta do outro usuário
+        response = self.client.get(f'/api/v1/accounts/{other_account.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unauthenticated_user_cannot_access_accounts(self):
+        # Remove autenticação
+        self.unauthenticate()
+
+        response = self.client.get('/api/v1/accounts/')
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

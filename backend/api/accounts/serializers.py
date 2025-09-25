@@ -13,6 +13,7 @@ class AccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = Account
         fields = '__all__'
+        read_only_fields = ['user']  # Usuário é definido automaticamente
 
     def validate(self, data):
         if data.get('is_archived') and data.get('include_calc', True):

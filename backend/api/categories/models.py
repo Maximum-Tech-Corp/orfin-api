@@ -1,13 +1,21 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
 
 class Category(models.Model):
     id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='categories',
+        verbose_name='Usuário'
+    )
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=7)  # Formato hex: #RRGGBB
     icon = models.CharField(max_length=20)
     is_archived = models.BooleanField(default=False)
+
     # Self-referencing para criar hierarquia de categorias
     subcategory = models.ForeignKey(
         'self',
@@ -17,16 +25,16 @@ class Category(models.Model):
         related_name='parent_categories'
     )
 
-    # Campos de auditoria
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def clean(self):
         """
-        Valida se já existe categoria com mesmo nome e mesma subcategoria.
-        Validação também mantem o nível máximo de subcategorias em 1.
+        Valida se já existe categoria com mesmo nome e mesma subcategoria para o mesmo usuário.
+        Validação o nível máximo de subcategorias em 1.
         """
         existing = Category.objects.filter(
+            user=self.user,
             name=self.name,
             subcategory=self.subcategory
         )
@@ -36,12 +44,18 @@ class Category(models.Model):
 
         if existing.exists():
             raise ValidationError({
-                'name': 'Já existe este nome de categoria. Use outro nome ou escolha outra categoria pai.'
+                'name': 'Você já possui uma categoria com este nome. Use outro nome ou escolha outra categoria pai.'
             })
 
         if self.subcategory and self.subcategory.subcategory:
             raise ValidationError({
                 'subcategory': 'Não é permitido ter mais de um nível de subcategoria.'
+            })
+
+        # Valida se a subcategoria pertence ao mesmo usuário
+        if self.subcategory and self.subcategory.user != self.user:
+            raise ValidationError({
+                'subcategory': 'A categoria pai deve pertencer ao mesmo usuário.'
             })
 
     def save(self, *args, **kwargs):
@@ -50,8 +64,7 @@ class Category(models.Model):
 
     def delete(self, *args, **kwargs):
         """
-        Previne exclusão física de categorias. 
-        Na view Destroy, arquivamos ao invés de deleta-las.
+        Previne exclusão física de categorias.
         """
         raise NotImplementedError("Não é permitido deletar categorias.")
 
@@ -71,5 +84,5 @@ class Category(models.Model):
         db_table = 'category'
         verbose_name = 'Categoria'
         verbose_name_plural = 'Categorias'
-        # Garante que não haja categorias com nomes duplicados no mesmo nível
-        unique_together = ['name', 'subcategory']
+        # Garante que não haja categorias com nomes duplicados no mesmo nível para o mesmo usuário
+        unique_together = ['user', 'name', 'subcategory']

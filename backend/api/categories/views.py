@@ -6,11 +6,6 @@ from .serializers import CategorySerializer
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet para operações CRUD de categorias.
-    Implementa soft delete através de arquivamento.
-    """
-
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
@@ -19,7 +14,9 @@ class CategoryViewSet(viewsets.ModelViewSet):
         Filtros do GET:
         Por padrão, mostra todas as categorias ativas
         """
-        queryset = Category.objects.all()
+
+        # Filtra apenas categorias do usuário autenticado
+        queryset = Category.objects.filter(user=self.request.user)
 
         # Se houver parâmetro 'only_archived'=true, retorna somente as arquivadas
         only_archived = self.request.GET.get('only_archived', 'false')
@@ -35,6 +32,12 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('name')
 
+    def perform_create(self, serializer):
+        """
+        Associa a categoria ao usuário autenticado durante a criação.
+        """
+        serializer.save(user=self.request.user)
+
     def destroy(self, request, *args, **kwargs):
         """
         Sobrescreve o método destroy para implementar soft delete.
@@ -47,8 +50,11 @@ class CategoryViewSet(viewsets.ModelViewSet):
             category.is_archived = True
             category.save()
 
-            # Procura por categorias filhas e as arquiva também
-            subcategories = Category.objects.filter(subcategory=category.id)
+            # Procura por categorias filhas do mesmo usuário e as arquiva também
+            subcategories = Category.objects.filter(
+                user=self.request.user,
+                subcategory=category.id
+            )
             if subcategories.exists():
                 subcategories.update(is_archived=True)
                 message = "Categoria e suas subcategorias foram arquivadas com sucesso."

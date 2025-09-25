@@ -15,9 +15,11 @@ class AccountViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Filtros do GET:
+        Mostra apenas contas do usuário autenticado
         Por padrão, mostra todas as contas ativas
         """
-        queryset = Account.objects.all()
+
+        queryset = Account.objects.filter(user=self.request.user)
 
         # Se houver parâmetro 'only_archived'=true, retorna somente as contas arquivadas
         only_archived = self.request.GET.get('only_archived', 'false')
@@ -32,6 +34,12 @@ class AccountViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(name__icontains=name)
 
         return queryset.order_by('name')
+
+    def perform_create(self, serializer):
+        """
+        Associa a conta ao usuário autenticado durante a criação.
+        """
+        serializer.save(user=self.request.user)
 
     def destroy(self, request, *args, **kwargs):
         """
