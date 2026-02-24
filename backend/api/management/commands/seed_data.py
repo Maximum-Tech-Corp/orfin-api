@@ -5,6 +5,7 @@ from faker import Faker
 
 from backend.api.accounts.models import Account
 from backend.api.categories.models import Category
+from backend.api.relatives.models import Relative
 from backend.api.users.models import User
 
 
@@ -22,6 +23,7 @@ class Command(BaseCommand):
         self.stdout.write('Cleaning existing data...')
         Account.objects.all().delete()
         Category.objects.all().delete()
+        Relative.objects.all().delete()
         # User é deletado por último devido às relações
         User.objects.filter(is_superuser=False).delete()
 
@@ -29,7 +31,7 @@ class Command(BaseCommand):
         self.stdout.write('Creating users...')
         users = []
 
-        # Cria 3 usuários de teste
+        # Cria 2 usuários de teste
         users_data = [
             {
                 'first_name': 'Diego',
@@ -56,6 +58,32 @@ class Command(BaseCommand):
             )
             users.append(user)
             self.stdout.write(f'Created user: {user.email}')
+
+        # Seed Relatives
+        self.stdout.write('Creating relatives...')
+
+        # Nomes para os perfis
+        relative_names = [
+            ['Pessoal', 'Trabalho', 'Família'],
+            ['Meu', 'Esposo(a)', 'Filhos']
+        ]
+
+        # Cria perfis para cada usuário
+        relatives_by_user = {}
+        for i, user in enumerate(users):
+            relatives_by_user[user] = []
+            names = relative_names[i] if i < len(relative_names) else [
+                'Perfil 1', 'Perfil 2', 'Perfil 3']
+
+            for j, name in enumerate(names):
+                relative = Relative.objects.create(
+                    name=name,
+                    image_num=j + 1,
+                    user=user,
+                    is_archived=False
+                )
+                relatives_by_user[user].append(relative)
+                self.stdout.write(f'Created relative: {name} for {user.email}')
 
         # Seed Categories
         self.stdout.write('Creating categories...')
@@ -88,26 +116,30 @@ class Command(BaseCommand):
             }
         ]
 
-        # Cria categorias para cada usuário
+        # Cria categorias para cada usuário e perfil
         for user in users:
-            for category_data in categories_data:
-                # Cria categoria principal com cor aleatória
-                main_category = Category.objects.create(
-                    user=user,
-                    name=category_data['name'],
-                    color=self.fake.random_element(colors),
-                    icon=category_data['icon']
-                )
-
-                # Cria subcategorias
-                for subcategory_name in category_data['subcategories']:
-                    Category.objects.create(
+            user_relatives = relatives_by_user[user]
+            for relative in user_relatives:
+                for category_data in categories_data:
+                    # Cria categoria principal com cor aleatória
+                    main_category = Category.objects.create(
                         user=user,
-                        name=subcategory_name,
+                        relative=relative,
+                        name=category_data['name'],
                         color=self.fake.random_element(colors),
-                        icon=category_data['icon'],
-                        subcategory=main_category
+                        icon=category_data['icon']
                     )
+
+                    # Cria subcategorias
+                    for subcategory_name in category_data['subcategories']:
+                        Category.objects.create(
+                            user=user,
+                            relative=relative,
+                            name=subcategory_name,
+                            color=self.fake.random_element(colors),
+                            icon=category_data['icon'],
+                            subcategory=main_category
+                        )
 
         # Seed Accounts
         self.stdout.write('Creating accounts...')
@@ -116,24 +148,29 @@ class Command(BaseCommand):
         banks = ['Nubank', 'Itaú', 'Bradesco',
                  'Santander', 'Banco do Brasil', 'BTG', 'Inter']
 
-        # Cria 2 contas para cada usuário com dados parcialmente aleatórios
+        # Cria 2 contas para cada usuário e perfil com dados parcialmente aleatórios
         for user in users:
-            for i in range(2):
-                bank = self.fake.random_element(banks)
-                account_type = self.fake.random_element(
-                    Account.ACCOUNT_TYPES)[0]
+            user_relatives = relatives_by_user[user]
+            for relative in user_relatives:
+                for i in range(2):
+                    bank = self.fake.random_element(banks)
+                    account_type = self.fake.random_element(
+                        Account.ACCOUNT_TYPES)[0]
 
-                Account.objects.create(
-                    user=user,
-                    bank_name=bank,
-                    name=f'Conta {self.fake.word().capitalize()} {i+1}',
-                    description=self.fake.text(max_nb_chars=150),
-                    account_type=account_type,
-                    color=self.fake.random_element(colors),
-                    balance=Decimal(str(self.fake.random.uniform(
-                        100, 15000))).quantize(Decimal('.01')),
-                    include_calc=self.fake.boolean(chance_of_getting_true=80),
-                    is_archived=self.fake.boolean(chance_of_getting_true=20)
-                )
+                    Account.objects.create(
+                        user=user,
+                        relative=relative,
+                        bank_name=bank,
+                        name=f'Conta {self.fake.word().capitalize()} {i+1}',
+                        description=self.fake.text(max_nb_chars=150),
+                        account_type=account_type,
+                        color=self.fake.random_element(colors),
+                        balance=Decimal(str(self.fake.random.uniform(
+                            100, 15000))).quantize(Decimal('.01')),
+                        include_calc=self.fake.boolean(
+                            chance_of_getting_true=80),
+                        is_archived=self.fake.boolean(
+                            chance_of_getting_true=20)
+                    )
 
         self.stdout.write(self.style.SUCCESS('Successfully seeded database'))

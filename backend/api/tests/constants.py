@@ -143,33 +143,39 @@ def get_user_data(suffix="", cpf_key='DEFAULT', **overrides):
 # Função helper para criar dados de conta
 
 
-def get_account_data(**overrides):
+def get_account_data(relative=None, **overrides):
     """
     Retorna dados de conta para testes.
 
     Args:
+        relative: Instância do modelo Relative para associar à conta
         **overrides: Campos a serem sobrescritos
 
     Returns:
         dict: Dados da conta
     """
     data = DEFAULT_ACCOUNT_DATA.copy()
+    if relative:
+        data['relative'] = relative
     data.update(overrides)
     return data
 
 # Função helper para criar dados de categoria
 
 
-def get_category_data(**overrides):
+def get_category_data(relative=None, **overrides):
     """
     Retorna dados de categoria para testes.
 
     Args:
+        relative: Instância do modelo Relative para associar à categoria
         **overrides: Campos a serem sobrescritos
 
     Returns:
         dict: Dados da categoria
     """
     data = DEFAULT_CATEGORY_DATA.copy()
+    if relative:
+        data['relative'] = relative
     data.update(overrides)
     return data
