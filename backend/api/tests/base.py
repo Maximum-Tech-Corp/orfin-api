@@ -3,6 +3,7 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from backend.api.users.models import User
+from backend.api.relatives.models import Relative
 
 from .constants import VALID_CPFS, get_user_data
 
@@ -23,6 +24,13 @@ class BaseAuthenticatedTestCase(APITestCase):
         # Cria usuário padrão para testes
         user_data = get_user_data()
         self.user = User.objects.create_user(**user_data)
+
+        # Cria perfil padrão para o usuário
+        self.relative = Relative.objects.create(
+            name='Perfil Teste',
+            image_num=1,
+            user=self.user
+        )
 
         # Autentica o cliente automaticamente
         self.authenticate_user(self.user)
@@ -50,7 +58,16 @@ class BaseAuthenticatedTestCase(APITestCase):
         """
         cpf_key = 'USER_2' if email_suffix == "2" else 'USER_3'
         user_data = get_user_data(suffix=email_suffix, cpf_key=cpf_key)
-        return User.objects.create_user(**user_data)
+        user = User.objects.create_user(**user_data)
+
+        # Cria perfil padrão para o usuário adicional
+        Relative.objects.create(
+            name='Perfil Teste',
+            image_num=1,
+            user=user
+        )
+
+        return user
 
     def unauthenticate(self):
         """
@@ -80,4 +97,13 @@ class BaseUnauthenticatedTestCase(APITestCase):
             **kwargs: Campos personalizados para o usuário
         """
         user_data = get_user_data(**kwargs)
-        return User.objects.create_user(**user_data)
+        user = User.objects.create_user(**user_data)
+
+        # Cria perfil padrão para o usuário
+        Relative.objects.create(
+            name='Perfil Teste',
+            image_num=1,
+            user=user
+        )
+
+        return user

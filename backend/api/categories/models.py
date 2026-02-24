@@ -11,6 +11,12 @@ class Category(models.Model):
         related_name='categories',
         verbose_name='Usuário'
     )
+    relative = models.ForeignKey(
+        'api.Relative',
+        on_delete=models.CASCADE,
+        related_name='categories',
+        verbose_name='Parente'
+    )
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=7)  # Formato hex: #RRGGBB
     icon = models.CharField(max_length=20)
@@ -35,6 +41,7 @@ class Category(models.Model):
         """
         existing = Category.objects.filter(
             user=self.user,
+            relative=self.relative,
             name=self.name,
             subcategory=self.subcategory
         )
@@ -52,10 +59,10 @@ class Category(models.Model):
                 'subcategory': 'Não é permitido ter mais de um nível de subcategoria.'
             })
 
-        # Valida se a subcategoria pertence ao mesmo usuário
-        if self.subcategory and self.subcategory.user != self.user:
+        # Valida se a subcategoria pertence ao mesmo usuário e relative
+        if self.subcategory and (self.subcategory.user != self.user or self.subcategory.relative != self.relative):
             raise ValidationError({
-                'subcategory': 'A categoria pai deve pertencer ao mesmo usuário.'
+                'subcategory': 'A categoria pai deve pertencer ao mesmo usuário e perfil.'
             })
 
     def save(self, *args, **kwargs):
@@ -84,5 +91,5 @@ class Category(models.Model):
         db_table = 'category'
         verbose_name = 'Categoria'
         verbose_name_plural = 'Categorias'
-        # Garante que não haja categorias com nomes duplicados no mesmo nível para o mesmo usuário
-        unique_together = ['user', 'name', 'subcategory']
+        # Garante que não haja categorias com nomes duplicados no mesmo nível para o mesmo usuário e perfil
+        unique_together = ['user', 'relative', 'name', 'subcategory']

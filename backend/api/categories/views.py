@@ -12,11 +12,24 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Filtros do GET:
+        Mostra apenas categorias do usuário autenticado
+        Se X-Relative-Id no header, filtra por perfil específico
         Por padrão, mostra todas as categorias ativas
         """
 
         # Filtra apenas categorias do usuário autenticado
         queryset = Category.objects.filter(user=self.request.user)
+
+        # Filtro por perfil se X-Relative-Id estiver presente no header
+        relative_id = self.request.headers.get('X-Relative-Id')
+        if relative_id:
+            try:
+                from backend.api.relatives.models import Relative
+                relative = Relative.objects.get(id=relative_id, user=self.request.user)
+                queryset = queryset.filter(relative=relative)
+            except Relative.DoesNotExist:
+                # Se perfil não existir, retorna queryset vazio
+                return Category.objects.none()
 
         # Se houver parâmetro 'only_archived'=true, retorna somente as arquivadas
         only_archived = self.request.GET.get('only_archived', 'false')
@@ -50,9 +63,10 @@ class CategoryViewSet(viewsets.ModelViewSet):
             category.is_archived = True
             category.save()
 
-            # Procura por categorias filhas do mesmo usuário e as arquiva também
+            # Procura por categorias filhas do mesmo usuário e perfil e as arquiva também
             subcategories = Category.objects.filter(
                 user=self.request.user,
+                relative=category.relative,
                 subcategory=category.id
             )
             if subcategories.exists():

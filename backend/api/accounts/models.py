@@ -29,6 +29,12 @@ class Account(models.Model):
         related_name='accounts',
         verbose_name='Usuário'
     )
+    relative = models.ForeignKey(
+        'api.Relative',
+        on_delete=models.CASCADE,
+        related_name='accounts',
+        verbose_name='Parente'
+    )
     bank_name = models.CharField(max_length=30)
     name = models.CharField(max_length=50)
     description = models.TextField(max_length=200, blank=True, null=True)
@@ -43,10 +49,11 @@ class Account(models.Model):
 
     def clean(self):
         """
-        Valida se já existe conta com mesmo nome para o mesmo usuário.
+        Valida se já existe conta com mesmo nome para o mesmo usuário e perfil.
         """
         existing = Account.objects.filter(
             user=self.user,
+            relative=self.relative,
             name=self.name
         )
 
@@ -74,5 +81,5 @@ class Account(models.Model):
         db_table = 'account'
         verbose_name = 'Conta'
         verbose_name_plural = 'Contas'
-        # Garante que o usuário não tenha duas contas com o mesmo nome
-        unique_together = ['user', 'name']
+        # Garante que o usuário não tenha duas contas com o mesmo nome no mesmo perfil
+        unique_together = ['user', 'relative', 'name']

@@ -4,7 +4,7 @@ Este arquivo fornece orientações para o Claude Code (claude.ai/code) ao trabal
 
 ## Visão Geral do Projeto
 
-Orfin API é uma Django REST API para gerenciamento financeiro pessoal e familiar. Este é o componente de API backend; o frontend é construído separadamente usando NextJS. O sistema gerencia usuários, contas financeiras e categorias de despesas com localização brasileira (validação de CPF, idioma português).
+Orfin API é uma Django REST API para gerenciamento financeiro pessoal e familiar. Este é o componente de API backend. O sistema gerencia usuários, contas financeiras e categorias de despesas com localização brasileira (validação de CPF, idioma português).
 
 ## Configuração de Desenvolvimento
 
@@ -231,7 +231,7 @@ Então executar servidor ou testes normalmente - a execução pausará no breakp
 - Se necessário uso de lib externas, durante geração de código, explique os passos necessários de instalação e uso.
 - Para cada modelo que solicitar geração de código nesta API sugira sempre todos os arquivos básicos (criação ou edição): models, serializers, views, urls, arquivos de testes, alteração/atualização no arquivo de seed (backend/api/management/commands/seed_data.py) e outras alterações ou criações necessárias para o pleno funcionamento do conjunto (exemplo: settings.py, arquivos na pasta utils, core, etc)
 - A arquitetura segue o padrão de organização por funcionalidade/domínio (users, accounts, categories) ao invés de por tipo de arquivo
-- Cada app possui sua própria estrutura completa: models.py, serializers.py, views.py, urls.py
+- Cada entidade possui uma estrutura isolada em uma pasta contendo models.py, serializers.py, views.py, urls.py, mas não deve haver migrations isoladas. Em outras palavras cada entidade/pasta continua sendo uma entidade (que pode se integrar com as outras como chave estrangeira por exemplo), mas não são um app Django completo.
 - Utilitários compartilhados ficam em backend/api/utils/ (ex: validators.py)
 - Handlers personalizados ficam em backend/api/core/handlers/ (ex: exception_handler.py)
 - O modelo User é o modelo de autenticação customizado do sistema e substitui o User padrão do Django

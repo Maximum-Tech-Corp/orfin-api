@@ -7,4 +7,5 @@ urlpatterns = [
     # Entidades principais
     path('', include('backend.api.accounts.urls')),
     path('', include('backend.api.categories.urls')),
+    path('', include('backend.api.relatives.urls')),
 ]

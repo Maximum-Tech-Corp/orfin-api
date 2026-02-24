@@ -16,10 +16,25 @@ class AccountViewSet(viewsets.ModelViewSet):
         """
         Filtros do GET:
         Mostra apenas contas do usuário autenticado
+        Se X-Relative-Id no header, filtra por perfil específico
         Por padrão, mostra todas as contas ativas
         """
 
         queryset = Account.objects.filter(user=self.request.user)
+
+        # Filtro por perfil se X-Relative-Id estiver presente no header
+        relative_id = self.request.headers.get('X-Relative-Id')
+        if relative_id:
+            try:
+                from backend.api.relatives.models import Relative
+                relative = Relative.objects.get(
+                    id=relative_id, user=self.request.user)
+                queryset = queryset.filter(relative=relative)
+            except Relative.DoesNotExist:
+                # Se perfil não existir, retorna um erro
+                raise ValidationError({
+                    'X-Relative-Id': f'Perfil com ID {relative_id} não encontrado ou não pertence ao usuário. Por favor limpar os Cookies do Navegador.'
+                })
 
         # Se houver parâmetro 'only_archived'=true, retorna somente as contas arquivadas
         only_archived = self.request.GET.get('only_archived', 'false')
