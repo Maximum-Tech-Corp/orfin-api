@@ -16,6 +16,23 @@ class RelativeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate_name(self, value):
+        """
+        Verifica se o usuário já possui um perfil com o mesmo nome.
+        """
+        user = self.context['request'].user
+        queryset = Relative.objects.filter(user=user, name=value)
+
+        # Em caso de update, exclui o próprio registro da verificação
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+
+        if queryset.exists():
+            raise serializers.ValidationError(
+                'Você já possui um perfil com este nome.')
+
+        return value
+
     def create(self, validated_data):
         """
         Cria um novo perfil associando automaticamente ao usuário logado.

@@ -298,3 +298,43 @@ class RelativeAPITest(APITestCase):
 
         response = self.client.post(self.url, data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_relative_with_duplicate_name(self):
+        """
+        Testa que criar um perfil com nome já existente retorna erro 400 amigável.
+        """
+        self.client.force_authenticate(user=self.user)
+
+        # Tenta criar perfil com mesmo nome do setUp
+        data = {
+            'name': 'Perfil Teste',
+            'image_num': 2
+        }
+
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Você já possui um perfil com este nome.', str(response.data))
+
+    def test_update_relative_to_duplicate_name(self):
+        """
+        Testa que atualizar um perfil para um nome já usado por outro perfil retorna erro 400.
+        """
+        self.client.force_authenticate(user=self.user)
+
+        # Cria um segundo perfil para o mesmo usuário
+        second_relative = Relative.objects.create(
+            name='Segundo Perfil',
+            user=self.user
+        )
+
+        # Tenta renomear o segundo perfil para o nome do primeiro
+        detail_url = reverse('relative-detail', kwargs={'pk': second_relative.pk})
+        data = {
+            'name': 'Perfil Teste',
+            'image_num': 1,
+            'is_archived': False
+        }
+
+        response = self.client.put(detail_url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Você já possui um perfil com este nome.', str(response.data))
