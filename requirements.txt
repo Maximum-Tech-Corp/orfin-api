@@ -12,3 +12,4 @@ Markdown==3.7
 django-seed==0.3.1 # python manage.py seed api --number=15
 Faker==37.4.0 # para uso na criação de dados falsos controlados
 coverage==7.6.3 # coverage run manage.py test .......... coverage report -m
+djangorestframework-stubs>=3.15.0 # type stubs para DRF — corrige erros de tipo no Pylance/Pyright

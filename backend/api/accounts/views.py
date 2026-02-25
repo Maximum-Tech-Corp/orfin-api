@@ -2,15 +2,23 @@ from decimal import Decimal
 
 from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from backend.api.relatives.models import Relative
 
 from .models import Account
 from .serializers import AccountSerializer
 
 
 class AccountViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para operações CRUD da entidade Account.
+    Permite criar, listar, recuperar, atualizar e arquivar contas financeiras.
+    """
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         """
@@ -19,16 +27,13 @@ class AccountViewSet(viewsets.ModelViewSet):
         Se X-Relative-Id no header, filtra por perfil específico
         Por padrão, mostra todas as contas ativas
         """
-
         queryset = Account.objects.filter(user=self.request.user)
 
         # Filtro por perfil se X-Relative-Id estiver presente no header
         relative_id = self.request.headers.get('X-Relative-Id')
         if relative_id:
             try:
-                from backend.api.relatives.models import Relative
-                relative = Relative.objects.get(
-                    id=relative_id, user=self.request.user)
+                relative = Relative.objects.get(id=relative_id, user=self.request.user)
                 queryset = queryset.filter(relative=relative)
             except Relative.DoesNotExist:
                 # Se perfil não existir, retorna um erro
@@ -37,14 +42,14 @@ class AccountViewSet(viewsets.ModelViewSet):
                 })
 
         # Se houver parâmetro 'only_archived'=true, retorna somente as contas arquivadas
-        only_archived = self.request.GET.get('only_archived', 'false')
+        only_archived = self.request.query_params.get('only_archived', 'false')
         if only_archived.lower() == 'true':
             queryset = queryset.filter(is_archived=True)
         else:
             queryset = queryset.filter(is_archived=False)
 
         # Se houver parâmetro 'name', filtra por nome
-        name = self.request.GET.get('name', None)
+        name = self.request.query_params.get('name', None)
         if name:
             queryset = queryset.filter(name__icontains=name)
 
@@ -61,21 +66,15 @@ class AccountViewSet(viewsets.ModelViewSet):
         Sobrescreve o método destroy para implementar soft delete.
         Arquiva a conta ao invés de deletá-la fisicamente.
         """
-        try:
-            # Arquiva a conta
-            account = self.get_object()
-            account.is_archived = True
-            account.save()
+        # get_object() já lida com 404 e permissões automaticamente
+        account = self.get_object()
+        account.is_archived = True
+        account.save()
 
-            return Response(
-                {"detail": "Conta arquivada com sucesso."},
-                status=status.HTTP_200_OK
-            )
-        except Exception:
-            return Response(
-                {"detail": "Conta não encontrada."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        return Response(
+            {"detail": "Conta arquivada com sucesso."},
+            status=status.HTTP_200_OK
+        )
 
     def update(self, request, *args, **kwargs):
         if 'balance' in request.data:

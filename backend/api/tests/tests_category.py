@@ -477,13 +477,13 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_categories_with_invalid_relative_id(self):
-        # Envia um relative_id que não existe para o listing — retorna lista vazia
+        # Envia um relative_id que não existe para o listing — retorna erro 400
         self.client.defaults['HTTP_X_RELATIVE_ID'] = '99999'
 
         response = self.client.get('/api/v1/categories/')
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.json().get('results')), 0)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('X-Relative-Id', str(response.json()))
 
     def test_create_category_without_relative_header(self):
         # Remove o header X-Relative-Id para garantir que a validação é acionada
