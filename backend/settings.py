@@ -1,6 +1,7 @@
 """
 Django project settings
 """
+import sys
 from pathlib import Path
 
 from decouple import Csv, config
@@ -42,8 +43,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# Adiciona o middleware de log de requisições/respostas apenas em desenvolvimento
-if DEBUG:
+# Adiciona o middleware de log de requisições/respostas apenas em desenvolvimento e fora dos testes
+TESTING = 'test' in sys.argv
+if DEBUG and not TESTING:
     MIDDLEWARE.insert(1, 'backend.api.core.middleware.request_logger.RequestResponseLoggerMiddleware')
 
 ROOT_URLCONF = 'backend.urls'
@@ -164,25 +166,26 @@ SIMPLE_JWT = {
 # Modelo de usuário customizado
 AUTH_USER_MODEL = 'api.User'
 
-# Logging para exibir detalhes de erros no terminal durante o desenvolvimento
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
+# Logging para exibir detalhes de erros no terminal apenas em desenvolvimento e fora dos testes
+if DEBUG and not TESTING:
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+            },
         },
-    },
-    'loggers': {
-        'django.request': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
+        'loggers': {
+            'django.request': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+            'backend.api.core.middleware.request_logger': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
         },
-        'backend.api.core.middleware.request_logger': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-    },
-}
+    }

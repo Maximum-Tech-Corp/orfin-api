@@ -8,6 +8,8 @@ omit =
     backend/api/users/apps.py
     manage.py
     backend/api/management/*
+    backend/api/core/middleware/*
+    backend/settings.py
     asgi.py
     wsgi.py
 
