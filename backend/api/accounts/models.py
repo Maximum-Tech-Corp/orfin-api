@@ -4,22 +4,13 @@ from django.db import models
 
 
 class Account(models.Model):
-    # TODO change to enum: Account types e colors
+    # TODO change to enum: Account types
     ACCOUNT_TYPES = [
         ('corrente', 'Corrente'),
         ('dinheiro', 'Dinheiro'),
         ('poupanca', 'Poupança'),
         ('investimentos', 'Investimentos'),
         ('outros', 'Outros'),
-    ]
-
-    COLORS = [
-        ('#FF0000', 'Red'),
-        ('#00FF00', 'Green'),
-        ('#0000FF', 'Blue'),
-        ('#FFFF00', 'Yellow'),
-        ('#FF00FF', 'Magenta'),
-        ('#00FFFF', 'Cyan'),
     ]
 
     id = models.AutoField(primary_key=True)
@@ -39,7 +30,8 @@ class Account(models.Model):
     name = models.CharField(max_length=50)
     description = models.TextField(max_length=200, blank=True, null=True)
     account_type = models.CharField(max_length=50, choices=ACCOUNT_TYPES)
-    color = models.CharField(max_length=7, choices=COLORS)
+    # Cor em formato hexadecimal (#RRGGBB) — validação de formato feita no serializer
+    color = models.CharField(max_length=7)
     include_calc = models.BooleanField(default=True)
     balance = models.DecimalField(max_digits=10, decimal_places=2)
     is_archived = models.BooleanField(default=False)

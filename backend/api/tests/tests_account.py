@@ -204,3 +204,27 @@ class AccountTestCase(BaseAuthenticatedTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Perfil não encontrado ou não pertence ao usuário.', str(response.json()))
+
+    def test_create_account_with_invalid_color_format(self):
+        # Cor em formato inválido (nome CSS ao invés de hex) deve ser rejeitada
+        payload = self.valid_payload.copy()
+        payload['color'] = 'red'
+        response = self.client.post('/api/v1/accounts/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('color', response.json())
+
+    def test_create_account_with_invalid_hex_color(self):
+        # Hex incompleto (5 dígitos) deve ser rejeitado
+        payload = self.valid_payload.copy()
+        payload['color'] = '#FF000'
+        response = self.client.post('/api/v1/accounts/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('color', response.json())
+
+    def test_create_account_with_custom_color(self):
+        # Cor hexadecimal válida que não estava nas antigas choices deve ser aceita
+        payload = self.valid_payload.copy()
+        payload['color'] = '#1A2B3C'
+        response = self.client.post('/api/v1/accounts/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()['color'], '#1A2B3C')
