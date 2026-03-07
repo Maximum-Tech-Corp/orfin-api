@@ -1,6 +1,11 @@
+import re
+
 from rest_framework import serializers
 
 from .models import Account
+
+# Padrão hexadecimal #RRGGBB (exatamente 6 dígitos hex após o #)
+HEX_COLOR_PATTERN = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -14,6 +19,16 @@ class AccountSerializer(serializers.ModelSerializer):
         model = Account
         fields = '__all__'
         read_only_fields = ['user', 'relative']  # Usuário e relative são definidos automaticamente
+
+    def validate_color(self, value):
+        """
+        Valida se a cor está no formato hexadecimal #RRGGBB.
+        """
+        if not HEX_COLOR_PATTERN.match(value):
+            raise serializers.ValidationError(
+                "Cor inválida. Use o formato hexadecimal #RRGGBB (ex: #FF5733)."
+            )
+        return value
 
     def create(self, validated_data):
         """
