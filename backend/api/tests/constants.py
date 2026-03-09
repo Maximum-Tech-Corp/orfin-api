@@ -88,9 +88,13 @@ DEFAULT_CATEGORY_DATA = {
     'name': 'Alimentação',
     'color': '#FF5733',
     'icon': 'food',
+    'type_category': 'despesas',
     'is_archived': False,
     'subcategory': None
 }
+
+# Tipos de categoria válidos
+CATEGORY_TYPES = ['despesas', 'receitas']
 
 # Cores hexadecimais válidas para testes
 VALID_HEX_COLORS = [

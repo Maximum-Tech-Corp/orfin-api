@@ -15,13 +15,25 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         # Configura header padrão para todos os testes
         self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
 
-        # Categoria principal para testes de subcategoria
+        # Categoria principal (despesas) para testes de subcategoria
         self.main_category = Category.objects.create(
             user=self.user,
             relative=self.relative,
             name='Transporte',
             color='#33A1FF',
             icon='car',
+            type_category='despesas',
+            is_archived=False
+        )
+
+        # Categoria principal de receitas para testes de tipo
+        self.main_category_receitas = Category.objects.create(
+            user=self.user,
+            relative=self.relative,
+            name='Salário',
+            color='#33FF57',
+            icon='salary',
+            type_category='receitas',
             is_archived=False
         )
 
@@ -33,9 +45,11 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Category.objects.count(), 2)  # main_category + nova
+        # main_category (despesas) + main_category_receitas + nova
+        self.assertEqual(Category.objects.count(), 3)
         self.assertEqual(response.json().get('name'), 'Alimentação')
         self.assertEqual(response.json().get('color'), '#FF5733')
+        self.assertEqual(response.json().get('type_category'), 'despesas')
 
     def test_cannot_create_category_invalid_color_format(self):
         invalid_payload = self.valid_payload.copy()
@@ -260,13 +274,14 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_cannot_update_to_nested_subcategory(self):
-        # Cria primeira subcategoria
+        # Cria primeira subcategoria (mesmo tipo do pai)
         subcategory = Category.objects.create(
             user=self.user,
             relative=self.relative,
             name='Subcategoria',
             color='#33FF57',
             icon='sub',
+            type_category='despesas',
             subcategory=self.main_category
         )
 
@@ -300,8 +315,8 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         response = self.client.get('/api/v1/categories/')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Deve retornar apenas 2 categorias (main_category + nova)
-        self.assertEqual(len(response.json().get('results')), 2)
+        # Deve retornar 3 categorias ativas (main_category + main_category_receitas + nova)
+        self.assertEqual(len(response.json().get('results')), 3)
 
     def test_list_categories_only_by_name(self):
         # Cria categoria ativa
@@ -394,13 +409,14 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
             user=self.user, relative=self.relative, **self.valid_payload)
         self.assertEqual(str(category), 'Alimentação')
 
-        # Testa representação com subcategoria
+        # Testa representação com subcategoria (mesmo tipo do pai)
         subcategory = Category.objects.create(
             user=self.user,
             relative=self.relative,
             name='Combustível',
             color='#00FF00',
             icon='gas',
+            type_category='despesas',
             subcategory=self.main_category
         )
         self.assertEqual(str(subcategory), 'Transporte > Combustível')
@@ -435,8 +451,8 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         response = self.client.get('/api/v1/categories/')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Deve retornar apenas 2 categorias (main_category + nova)
-        self.assertEqual(len(response.json().get('results')), 2)
+        # Deve retornar apenas 3 categorias (main_category + main_category_receitas + nova)
+        self.assertEqual(len(response.json().get('results')), 3)
 
     def test_user_cannot_access_other_user_category(self):
         # Cria outro usuário e uma categoria para ele
@@ -551,3 +567,148 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.json()['is_archived'])
+
+    # --- Testes de type_category ---
+
+    def test_create_category_with_despesas_type_success(self):
+        # Criação explícita de categoria do tipo despesas
+        payload = self.valid_payload.copy()
+        payload['type_category'] = 'despesas'
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json().get('type_category'), 'despesas')
+
+    def test_create_category_with_receitas_type_success(self):
+        # Criação explícita de categoria do tipo receitas
+        payload = self.valid_payload.copy()
+        payload.update({'name': 'Freelance', 'type_category': 'receitas'})
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json().get('type_category'), 'receitas')
+
+    def test_cannot_create_category_with_invalid_type(self):
+        # Tipo inválido deve retornar 400
+        payload = self.valid_payload.copy()
+        payload['type_category'] = 'invalido'
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('type_category', response.json())
+
+    def test_create_subcategory_with_same_type_category_success(self):
+        # Subcategoria com mesmo tipo da categoria pai deve ser permitida
+        payload = self.valid_payload.copy()
+        payload.update({'name': 'Combustível', 'subcategory': self.main_category.id})
+        # valid_payload tem type_category='despesas' e main_category também é 'despesas'
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json().get('type_category'), 'despesas')
+
+    def test_cannot_create_subcategory_with_different_type_category(self):
+        # Subcategoria com tipo diferente da categoria pai deve ser bloqueada
+        payload = self.valid_payload.copy()
+        payload.update({
+            'name': 'Receita Filha',
+            'type_category': 'receitas',      # tipo diferente do pai
+            'subcategory': self.main_category.id  # pai é 'despesas'
+        })
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('type_category', str(response.json()))
+
+    def test_cannot_create_subcategory_with_different_type_category_via_model(self):
+        # Validação também deve ocorrer diretamente no modelo
+        with self.assertRaises(ValidationError) as cm:
+            Category.objects.create(
+                user=self.user,
+                relative=self.relative,
+                name='Receita Filha',
+                color='#FF0000',
+                icon='test',
+                type_category='receitas',
+                subcategory=self.main_category  # pai é 'despesas'
+            )
+
+        self.assertIn('type_category', cm.exception.message_dict)
+
+    def test_cannot_update_type_category_after_creation(self):
+        # type_category é imutável após a criação, mesmo sem subcategorias filhas
+        category = Category.objects.create(
+            user=self.user, relative=self.relative, **self.valid_payload)
+
+        response = self.client.patch(
+            f'/api/v1/categories/{category.id}/',
+            {'type_category': 'receitas'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('type_category', str(response.json()))
+
+    def test_cannot_update_type_category_when_has_subcategories(self):
+        # Também deve bloquear mesmo quando existem subcategorias filhas
+        parent = Category.objects.create(
+            user=self.user, relative=self.relative, **self.valid_payload)
+
+        Category.objects.create(
+            user=self.user,
+            relative=self.relative,
+            name='Combustível',
+            color='#FF0000',
+            icon='car',
+            type_category='despesas',
+            subcategory=parent
+        )
+
+        response = self.client.patch(
+            f'/api/v1/categories/{parent.id}/',
+            {'type_category': 'receitas'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('type_category', str(response.json()))
+
+    def test_cannot_update_type_category_via_model(self):
+        # Validação de imutabilidade de type_category também deve ocorrer no modelo
+        category = Category.objects.create(
+            user=self.user, relative=self.relative, **self.valid_payload)
+
+        category.type_category = 'receitas'
+        with self.assertRaises(ValidationError) as cm:
+            category.save()
+
+        self.assertIn('type_category', cm.exception.message_dict)
+
+    def test_type_category_is_returned_in_list(self):
+        # type_category deve aparecer nos resultados da listagem
+        response = self.client.get('/api/v1/categories/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json().get('results')
+        self.assertGreater(len(results), 0)
+        self.assertIn('type_category', results[0])
+
+    def test_create_receitas_subcategory_under_receitas_parent_success(self):
+        # Subcategoria receitas sob pai receitas deve ser permitida
+        payload = {
+            'name': 'Bônus',
+            'color': '#00FF00',
+            'icon': 'bonus',
+            'type_category': 'receitas',
+            'subcategory': self.main_category_receitas.id
+        }
+
+        response = self.client.post('/api/v1/categories/', payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json().get('type_category'), 'receitas')

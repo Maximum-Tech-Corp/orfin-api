@@ -4,6 +4,12 @@ from django.db import models
 
 
 class Category(models.Model):
+    # Tipos de categoria disponíveis
+    CATEGORY_TYPES = [
+        ('despesas', 'Despesas'),
+        ('receitas', 'Receitas'),
+    ]
+
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -20,6 +26,7 @@ class Category(models.Model):
     name = models.CharField(max_length=50)
     color = models.CharField(max_length=7)  # Formato hex: #RRGGBB
     icon = models.CharField(max_length=20)
+    type_category = models.CharField(max_length=10, choices=CATEGORY_TYPES)
     is_archived = models.BooleanField(default=False)
 
     # Self-referencing para criar hierarquia de categorias
@@ -64,6 +71,20 @@ class Category(models.Model):
             raise ValidationError({
                 'subcategory': 'A categoria pai deve pertencer ao mesmo usuário e perfil.'
             })
+
+        # Valida se o tipo da subcategoria é igual ao tipo da categoria pai
+        if self.subcategory and self.type_category != self.subcategory.type_category:
+            raise ValidationError({
+                'type_category': 'O tipo da subcategoria deve ser igual ao tipo da categoria pai.'
+            })
+
+        # Impede qualquer alteração de type_category após a criação da categoria
+        if self.pk:
+            original = Category.objects.get(pk=self.pk)
+            if original.type_category != self.type_category:
+                raise ValidationError({
+                    'type_category': 'Não é possível alterar o tipo de uma categoria após sua criação.'
+                })
 
     def save(self, *args, **kwargs):
         self.clean()
