@@ -228,3 +228,14 @@ class AccountTestCase(BaseAuthenticatedTestCase):
         response = self.client.post('/api/v1/accounts/', payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.json()['color'], '#1A2B3C')
+
+    def test_retrieve_archived_account_returns_200(self):
+        # GET individual deve funcionar mesmo para contas arquivadas
+        archived_payload = self.valid_payload.copy()
+        archived_payload['is_archived'] = True
+        account = Account.objects.create(user=self.user, relative=self.relative, **archived_payload)
+
+        response = self.client.get(f'/api/v1/accounts/{account.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()['is_archived'])

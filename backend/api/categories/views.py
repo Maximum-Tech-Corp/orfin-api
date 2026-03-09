@@ -39,12 +39,14 @@ class CategoryViewSet(viewsets.ModelViewSet):
                     'X-Relative-Id': f'Perfil com ID {relative_id} não encontrado ou não pertence ao usuário. Por favor limpar os Cookies do Navegador.'
                 })
 
-        # Se houver parâmetro 'only_archived'=true, retorna somente as arquivadas
-        only_archived = self.request.query_params.get('only_archived', 'false')
-        if only_archived.lower() == 'true':
-            queryset = queryset.filter(is_archived=True)
-        else:
-            queryset = queryset.filter(is_archived=False)
+        # Filtro por is_archived aplicado apenas na listagem
+        # Retrieve, update e destroy devem funcionar independente do status de arquivamento
+        if self.action == 'list':
+            only_archived = self.request.query_params.get('only_archived', 'false')
+            if only_archived.lower() == 'true':
+                queryset = queryset.filter(is_archived=True)
+            else:
+                queryset = queryset.filter(is_archived=False)
 
         # Se houver parâmetro 'name', filtra por nome
         name = self.request.query_params.get('name', None)

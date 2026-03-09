@@ -539,3 +539,15 @@ class CategoryTestCase(BaseAuthenticatedTestCase):
         response = self.client.get('/api/v1/categories/')
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_retrieve_archived_category_returns_200(self):
+        # GET individual deve funcionar mesmo para categorias arquivadas
+        archived_payload = self.valid_payload.copy()
+        archived_payload['is_archived'] = True
+        category = Category.objects.create(
+            user=self.user, relative=self.relative, **archived_payload)
+
+        response = self.client.get(f'/api/v1/categories/{category.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()['is_archived'])
