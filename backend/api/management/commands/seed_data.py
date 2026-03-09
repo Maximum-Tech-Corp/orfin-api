@@ -92,28 +92,44 @@ class Command(BaseCommand):
         colors = ['#FF5733', '#33FF57', '#3357FF',
                   '#FF33F5', '#33FFF5', '#F5FF33']
 
-        # Categorias principais com subcategorias
+        # Categorias principais com subcategorias, separadas por tipo
         categories_data = [
             {
                 'name': 'Moradia',
                 'icon': 'home',
+                'type_category': 'despesas',
                 'subcategories': ['Aluguel', 'Condomínio', 'Água', 'Luz', 'Internet']
             },
             {
                 'name': 'Transporte',
                 'icon': 'car',
+                'type_category': 'despesas',
                 'subcategories': ['Combustível', 'Manutenção', 'Estacionamento', 'Uber']
             },
             {
                 'name': 'Alimentação',
                 'icon': 'food',
+                'type_category': 'despesas',
                 'subcategories': ['Mercado', 'Restaurante', 'Delivery']
             },
             {
                 'name': 'Saúde',
                 'icon': 'health',
+                'type_category': 'despesas',
                 'subcategories': ['Plano de Saúde', 'Medicamentos', 'Consultas']
-            }
+            },
+            {
+                'name': 'Salário',
+                'icon': 'salary',
+                'type_category': 'receitas',
+                'subcategories': ['Salário Fixo', 'Bônus', '13º Salário']
+            },
+            {
+                'name': 'Renda Extra',
+                'icon': 'income',
+                'type_category': 'receitas',
+                'subcategories': ['Freelance', 'Aluguel Recebido', 'Dividendos']
+            },
         ]
 
         # Cria categorias para cada usuário e perfil
@@ -121,16 +137,17 @@ class Command(BaseCommand):
             user_relatives = relatives_by_user[user]
             for relative in user_relatives:
                 for category_data in categories_data:
-                    # Cria categoria principal com cor aleatória
+                    # Cria categoria principal com cor aleatória e tipo definido
                     main_category = Category.objects.create(
                         user=user,
                         relative=relative,
                         name=category_data['name'],
                         color=self.fake.random_element(colors),
-                        icon=category_data['icon']
+                        icon=category_data['icon'],
+                        type_category=category_data['type_category']
                     )
 
-                    # Cria subcategorias
+                    # Cria subcategorias com o mesmo tipo da categoria pai
                     for subcategory_name in category_data['subcategories']:
                         Category.objects.create(
                             user=user,
@@ -138,6 +155,7 @@ class Command(BaseCommand):
                             name=subcategory_name,
                             color=self.fake.random_element(colors),
                             icon=category_data['icon'],
+                            type_category=category_data['type_category'],
                             subcategory=main_category
                         )
 

@@ -73,3 +73,30 @@ class CategorySerializer(serializers.ModelSerializer):
                 )
 
         return value
+
+    def validate(self, attrs):
+        """
+        Validações cruzadas entre campos:
+        1. type_category da subcategoria deve ser igual ao da categoria pai.
+        2. Não é permitido alterar type_category de uma categoria que possui subcategorias filhas.
+        """
+        # Determina o tipo e o pai efetivos (podem vir do request ou da instância em updates parciais)
+        type_category = attrs.get('type_category') or (
+            self.instance.type_category if self.instance else None
+        )
+        subcategory = attrs.get('subcategory', None if not self.instance else self.instance.subcategory)
+
+        # Valida correspondência de tipo entre subcategoria e categoria pai
+        if subcategory and type_category and subcategory.type_category != type_category:
+            raise serializers.ValidationError({
+                'type_category': 'O tipo da subcategoria deve ser igual ao tipo da categoria pai.'
+            })
+
+        # Impede qualquer alteração de type_category após a criação da categoria
+        if self.instance and 'type_category' in attrs:
+            if attrs['type_category'] != self.instance.type_category:
+                raise serializers.ValidationError({
+                    'type_category': 'Não é possível alterar o tipo de uma categoria após sua criação.'
+                })
+
+        return attrs

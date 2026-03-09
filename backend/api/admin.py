@@ -59,8 +59,8 @@ class CategoryAdmin(admin.ModelAdmin):
     """
     Admin para o modelo Category.
     """
-    list_display = ['name', 'user', 'subcategory', 'color', 'icon', 'is_archived', 'created_at']
-    list_filter = ['is_archived', 'created_at']
+    list_display = ['name', 'user', 'type_category', 'subcategory', 'color', 'icon', 'is_archived', 'created_at']
+    list_filter = ['type_category', 'is_archived', 'created_at']
     search_fields = ['name', 'user__email', 'user__first_name']
     ordering = ['-created_at']
     readonly_fields = ['created_at', 'updated_at']
