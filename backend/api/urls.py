@@ -8,4 +8,7 @@ urlpatterns = [
     path('', include('backend.api.accounts.urls')),
     path('', include('backend.api.categories.urls')),
     path('', include('backend.api.relatives.urls')),
+
+    # Transações e recorrência
+    path('', include('backend.api.transactions.urls')),
 ]

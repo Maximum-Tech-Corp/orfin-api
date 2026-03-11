@@ -4,6 +4,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .users.models import User
 from .accounts.models import Account
 from .categories.models import Category
+from .transactions.models import Transaction, RecurringRule
 
 
 @admin.register(User)
@@ -64,3 +65,31 @@ class CategoryAdmin(admin.ModelAdmin):
     search_fields = ['name', 'user__email', 'user__first_name']
     ordering = ['-created_at']
     readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(Transaction)
+class TransactionAdmin(admin.ModelAdmin):
+    """
+    Admin para o modelo Transaction.
+    """
+    list_display = [
+        'description', 'user', 'type', 'amount', 'date', 'is_paid', 'created_at'
+    ]
+    list_filter = ['type', 'is_paid', 'created_at']
+    search_fields = ['description', 'user__email', 'user__first_name']
+    ordering = ['-date', '-created_at']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+
+
+@admin.register(RecurringRule)
+class RecurringRuleAdmin(admin.ModelAdmin):
+    """
+    Admin para o modelo RecurringRule.
+    """
+    list_display = [
+        'description', 'user', 'type', 'frequency', 'interval', 'amount', 'is_active', 'created_at'
+    ]
+    list_filter = ['type', 'frequency', 'is_active', 'created_at']
+    search_fields = ['description', 'user__email', 'user__first_name']
+    ordering = ['-created_at']
+    readonly_fields = ['id', 'created_at', 'updated_at']
