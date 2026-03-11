@@ -183,3 +183,65 @@ def get_category_data(relative=None, **overrides):
         data['relative'] = relative
     data.update(overrides)
     return data
+
+
+# Dados padrão para transações
+DEFAULT_TRANSACTION_DATA = {
+    'type': 'despesa',
+    'amount': '150.00',
+    'description': 'Mercado',
+    'date': '2026-03-11',
+    'is_paid': True,
+}
+
+# Dados padrão para regras de recorrência (sem campos opcionais nulos)
+DEFAULT_RECURRING_RULE_DATA = {
+    'type': 'despesa',
+    'frequency': 'monthly',
+    'interval': 1,
+    'start_date': '2026-03-01',
+    'amount': '1500.00',
+    'description': 'Aluguel',
+}
+
+
+def get_transaction_data(account=None, category=None, **overrides):
+    """
+    Retorna dados de transação para testes.
+
+    Args:
+        account: Instância de Account (necessária para criar via API como ID)
+        category: Instância de Category (necessária para receita/despesa)
+        **overrides: Campos a serem sobrescritos
+
+    Returns:
+        dict: Dados da transação prontos para POST via API
+    """
+    data = DEFAULT_TRANSACTION_DATA.copy()
+    if account:
+        data['account'] = account.pk
+    if category:
+        data['category'] = category.pk
+    data.update(overrides)
+    return data
+
+
+def get_recurring_rule_data(account=None, category=None, **overrides):
+    """
+    Retorna dados de regra de recorrência para testes.
+
+    Args:
+        account: Instância de Account
+        category: Instância de Category
+        **overrides: Campos a serem sobrescritos
+
+    Returns:
+        dict: Dados da regra prontos para POST via API
+    """
+    data = DEFAULT_RECURRING_RULE_DATA.copy()
+    if account:
+        data['account'] = account.pk
+    if category:
+        data['category'] = category.pk
+    data.update(overrides)
+    return data

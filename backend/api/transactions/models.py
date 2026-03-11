@@ -57,18 +57,22 @@ class RecurringRule(models.Model):
         verbose_name='Categoria'
     )
 
-    type = models.CharField(max_length=10, choices=TRANSACTION_TYPES, verbose_name='Tipo')
-    frequency = models.CharField(max_length=10, choices=FREQUENCY_CHOICES, verbose_name='Frequência')
+    type = models.CharField(
+        max_length=10, choices=TRANSACTION_TYPES, verbose_name='Tipo')
+    frequency = models.CharField(
+        max_length=10, choices=FREQUENCY_CHOICES, verbose_name='Frequência')
     # Intervalo entre ocorrências: 1 = toda semana, 2 = a cada 2 semanas, etc.
     interval = models.PositiveIntegerField(default=1, verbose_name='Intervalo')
     start_date = models.DateField(verbose_name='Data de início')
     # end_date e occurrences_count são mutuamente exclusivos — validado em clean()
-    end_date = models.DateField(null=True, blank=True, verbose_name='Data de encerramento')
+    end_date = models.DateField(
+        null=True, blank=True, verbose_name='Data de encerramento')
     occurrences_count = models.PositiveIntegerField(
         null=True, blank=True, verbose_name='Número de ocorrências'
     )
 
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Valor')
+    amount = models.DecimalField(
+        max_digits=12, decimal_places=2, verbose_name='Valor')
     description = models.CharField(max_length=255, verbose_name='Descrição')
     is_active = models.BooleanField(default=True, verbose_name='Ativo')
 
@@ -92,8 +96,14 @@ class RecurringRule(models.Model):
                 'end_date': 'A data de encerramento deve ser posterior à data de início.'
             })
 
-        if self.amount is not None and self.amount <= 0:
-            raise ValidationError({'amount': 'O valor deve ser positivo.'})
+        if self.amount is not None:
+            from decimal import Decimal, InvalidOperation
+            try:
+                if Decimal(str(self.amount)) <= 0:
+                    raise ValidationError(
+                        {'amount': 'O valor deve ser positivo.'})
+            except InvalidOperation:
+                pass  # Validação de formato fica a cargo do Django/serializer
 
     def save(self, *args, **kwargs):
         self.clean()
@@ -104,7 +114,8 @@ class RecurringRule(models.Model):
         Previne exclusão física de regras de recorrência.
         Use soft_delete() para desativar.
         """
-        raise NotImplementedError('Não é permitido deletar regras de recorrência diretamente.')
+        raise NotImplementedError(
+            'Não é permitido deletar regras de recorrência diretamente.')
 
     def soft_delete(self):
         """
@@ -200,12 +211,15 @@ class Transaction(models.Model):
         null=True, blank=True, verbose_name='Total de Parcelas'
     )
 
-    type = models.CharField(max_length=15, choices=TRANSACTION_TYPES, verbose_name='Tipo')
+    type = models.CharField(
+        max_length=15, choices=TRANSACTION_TYPES, verbose_name='Tipo')
     # Sempre positivo — o tipo (receita/despesa/transferencia) determina a direção do fluxo
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Valor')
+    amount = models.DecimalField(
+        max_digits=12, decimal_places=2, verbose_name='Valor')
     description = models.CharField(max_length=255, verbose_name='Descrição')
     # Campo livre para anotações adicionais sobre a transação (ex: número NF, referência, lembrete)
-    notes = models.TextField(max_length=500, null=True, blank=True, verbose_name='Observação')
+    notes = models.TextField(max_length=500, null=True,
+                             blank=True, verbose_name='Observação')
     # Data de competência (quando ocorreu/ocorrerá a transação)
     date = models.DateField(verbose_name='Data')
     # False = lançamento previsto/agendado; True = confirmado/realizado
@@ -221,8 +235,14 @@ class Transaction(models.Model):
         - category é obrigatória para receita e despesa
         - campos de parcelamento devem ser consistentes entre si
         """
-        if self.amount is not None and self.amount <= 0:
-            raise ValidationError({'amount': 'O valor da transação deve ser positivo.'})
+        if self.amount is not None:
+            from decimal import Decimal, InvalidOperation
+            try:
+                if Decimal(str(self.amount)) <= 0:
+                    raise ValidationError(
+                        {'amount': 'O valor da transação deve ser positivo.'})
+            except InvalidOperation:
+                pass  # Validação de formato fica a cargo do Django/serializer
 
         # Categoria obrigatória para receita e despesa (opcional para transferencia)
         if self.type in ('receita', 'despesa') and not self.category_id:
@@ -262,9 +282,11 @@ class Transaction(models.Model):
                 name='idx_transaction_period'
             ),
             # Índice para extrato de conta
-            models.Index(fields=['account', 'date'], name='idx_transaction_account'),
+            models.Index(fields=['account', 'date'],
+                         name='idx_transaction_account'),
             # Índice para relatórios por categoria
-            models.Index(fields=['category', 'date'], name='idx_transaction_category'),
+            models.Index(fields=['category', 'date'],
+                         name='idx_transaction_category'),
             # Índice para gerenciamento de recorrências
             models.Index(
                 fields=['recurring_rule', 'date'], name='idx_transaction_recurring'

@@ -6,12 +6,8 @@ from rest_framework.response import Response
 from backend.api.relatives.models import Relative
 
 from .models import RecurringRule, Transaction
-from .serializers import (
-    RecurringRuleListSerializer,
-    RecurringRuleSerializer,
-    TransactionListSerializer,
-    TransactionSerializer,
-)
+from .serializers import (RecurringRuleListSerializer, RecurringRuleSerializer,
+                          TransactionListSerializer, TransactionSerializer)
 
 
 class TransactionViewSet(viewsets.ModelViewSet):
@@ -54,7 +50,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
         relative_id = self.request.headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=self.request.user)
+                relative = Relative.objects.get(
+                    id=relative_id, user=self.request.user)
                 queryset = queryset.filter(relative=relative)
             except Relative.DoesNotExist:
                 raise ValidationError({
@@ -63,8 +60,6 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
         # Na listagem, aplica filtros adicionais de período e status
         if self.action == 'list':
-            queryset = queryset.filter(is_archived=False)
-
             month = self.request.query_params.get('month')
             year = self.request.query_params.get('year')
             if month:
@@ -96,7 +91,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
         Nota: a lógica de reversão/aplicação de saldo será adicionada na Parte 2.
         """
         if 'transfer_pair_id' in request.data:
-            raise ValidationError({'transfer_pair_id': 'Este campo não pode ser alterado diretamente.'})
+            raise ValidationError(
+                {'transfer_pair_id': 'Este campo não pode ser alterado diretamente.'})
         return super().update(request, *args, **kwargs)
 
 
@@ -132,7 +128,8 @@ class RecurringRuleViewSet(viewsets.ModelViewSet):
         relative_id = self.request.headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=self.request.user)
+                relative = Relative.objects.get(
+                    id=relative_id, user=self.request.user)
                 queryset = queryset.filter(relative=relative)
             except Relative.DoesNotExist:
                 raise ValidationError({
@@ -141,7 +138,8 @@ class RecurringRuleViewSet(viewsets.ModelViewSet):
 
         if self.action == 'list':
             # Permite listar regras inativas com ?only_inactive=true
-            only_inactive = self.request.query_params.get('only_inactive', 'false')
+            only_inactive = self.request.query_params.get(
+                'only_inactive', 'false')
             if only_inactive.lower() == 'true':
                 queryset = queryset.filter(is_active=False)
             else:
