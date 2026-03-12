@@ -1,6 +1,8 @@
 import datetime
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 
@@ -584,6 +586,278 @@ class TransactionAPITest(BaseAuthenticatedTestCase):
         response = self.client.delete(self._detail_url(t.pk))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertTrue(Transaction.objects.filter(pk=t.pk).exists())
+
+
+# ===========================================================================
+# TESTES DE SALDO — Parte 2
+# ===========================================================================
+
+class BalanceDeltaHelperTest(TestCase):
+    """
+    Testes unitários do helper _balance_delta.
+    Garante o comportamento correto de direção por tipo de transação.
+    """
+
+    def setUp(self):
+        from backend.api.transactions.views import _balance_delta
+        self.delta = _balance_delta
+
+    def test_receita_retorna_valor_positivo(self):
+        """Receita deve retornar delta positivo (crédito)."""
+        self.assertEqual(self.delta('receita', Decimal('100.00')), Decimal('100.00'))
+
+    def test_despesa_retorna_valor_negativo(self):
+        """Despesa deve retornar delta negativo (débito)."""
+        self.assertEqual(self.delta('despesa', Decimal('100.00')), Decimal('-100.00'))
+
+    def test_transferencia_retorna_zero(self):
+        """Transferência deve retornar zero — lógica tratada na Parte 3."""
+        self.assertEqual(self.delta('transferencia', Decimal('100.00')), Decimal('0'))
+
+
+class TransactionBalanceTest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração da lógica de atualização de saldo (Parte 2).
+    Verifica que Account.balance é atualizado corretamente em cada cenário
+    de criação, edição e deleção de receitas e despesas.
+
+    Convenção: make_transaction cria registros diretamente no banco (sem view),
+    portanto o saldo NÃO é atualizado automaticamente. Quando o teste precisa
+    de um saldo inicial diferente de 1000, ele ajusta self.account.balance
+    manualmente antes de chamar o endpoint testado.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+        self.url_list = reverse('transaction-list')
+        # Conta com saldo inicial de R$1.000,00
+        self.account = make_account(self.user, self.relative)
+        self.category_despesa = make_category(
+            self.user, self.relative, 'Alimentação', 'despesas')
+        self.category_receita = make_category(
+            self.user, self.relative, 'Salário', 'receitas')
+
+    def _detail_url(self, pk):
+        return reverse('transaction-detail', args=[pk])
+
+    def _balance(self):
+        """Recarrega e retorna o saldo atualizado da conta do banco."""
+        self.account.refresh_from_db()
+        return self.account.balance
+
+    def _set_balance(self, value):
+        """Define o saldo da conta diretamente (simula estado pós-criação via API)."""
+        self.account.balance = Decimal(str(value))
+        self.account.save()
+
+    # --- CREATE: impacto no saldo ---
+
+    def test_create_despesa_paga_debita_saldo(self):
+        """POST despesa com is_paid=True deve debitar o valor do saldo."""
+        data = get_transaction_data(
+            account=self.account, category=self.category_despesa,
+            amount='200.00', is_paid=True,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('800.00'))
+
+    def test_create_receita_paga_credita_saldo(self):
+        """POST receita com is_paid=True deve creditar o valor no saldo."""
+        data = get_transaction_data(
+            account=self.account, category=self.category_receita,
+            type='receita', amount='500.00', is_paid=True,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('1500.00'))
+
+    def test_create_despesa_nao_paga_nao_altera_saldo(self):
+        """POST despesa com is_paid=False não deve alterar o saldo."""
+        data = get_transaction_data(
+            account=self.account, category=self.category_despesa,
+            amount='200.00', is_paid=False,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_create_receita_nao_paga_nao_altera_saldo(self):
+        """POST receita com is_paid=False não deve alterar o saldo."""
+        data = get_transaction_data(
+            account=self.account, category=self.category_receita,
+            type='receita', amount='500.00', is_paid=False,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_create_transferencia_nao_altera_saldo(self):
+        """POST transferência não deve alterar o saldo (lógica de par na Parte 3)."""
+        data = get_transaction_data(
+            account=self.account, type='transferencia',
+            amount='300.00', is_paid=True,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_create_sem_account_nao_altera_saldo(self):
+        """POST sem conta vinculada não deve alterar nenhum saldo."""
+        data = get_transaction_data(
+            category=self.category_despesa, amount='200.00', is_paid=True,
+        )
+        self.client.post(self.url_list, data)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    # --- PATCH: toggle is_paid ---
+
+    def test_patch_is_paid_false_para_true_aplica_delta(self):
+        """PATCH is_paid false→true deve aplicar o delta (débito) ao saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='300.00', is_paid=False,
+        )
+        self.client.patch(self._detail_url(t.pk), {'is_paid': True})
+        # 1000 - 300 = 700
+        self.assertEqual(self._balance(), Decimal('700.00'))
+
+    def test_patch_is_paid_true_para_false_reverte_delta(self):
+        """PATCH is_paid true→false deve reverter o delta (crédito) ao saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='300.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 - 300 = 700)
+        self._set_balance('700.00')
+
+        self.client.patch(self._detail_url(t.pk), {'is_paid': False})
+        # 700 + 300 = 1000 (revertido)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_patch_is_paid_false_para_false_nao_altera_saldo(self):
+        """PATCH sem mudança de is_paid (false→false) não deve alterar o saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='300.00', is_paid=False,
+        )
+        self.client.patch(self._detail_url(t.pk), {'description': 'Atualizada'})
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    # --- PATCH: mudança de amount ---
+
+    def test_patch_amount_em_despesa_paga_ajusta_delta_liquido(self):
+        """PATCH amount em despesa paga deve ajustar o delta líquido (reverte antigo, aplica novo)."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='200.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 - 200 = 800)
+        self._set_balance('800.00')
+
+        self.client.patch(self._detail_url(t.pk), {'amount': '350.00'})
+        # 800 + 200 (reverte antigo) - 350 (aplica novo) = 650
+        self.assertEqual(self._balance(), Decimal('650.00'))
+
+    def test_patch_amount_em_receita_paga_ajusta_delta_liquido(self):
+        """PATCH amount em receita paga deve ajustar o delta líquido."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_receita,
+            type='receita', amount='500.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 + 500 = 1500)
+        self._set_balance('1500.00')
+
+        self.client.patch(self._detail_url(t.pk), {'amount': '300.00'})
+        # 1500 - 500 (reverte antigo) + 300 (aplica novo) = 1300
+        self.assertEqual(self._balance(), Decimal('1300.00'))
+
+    def test_patch_amount_nao_pago_nao_altera_saldo(self):
+        """PATCH amount em transação não paga não deve alterar o saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='200.00', is_paid=False,
+        )
+        self.client.patch(self._detail_url(t.pk), {'amount': '350.00'})
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    # --- PATCH: mudança de type ---
+
+    def test_patch_type_despesa_para_receita_inverte_saldo(self):
+        """PATCH type despesa→receita em transação paga deve inverter o delta."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_receita,
+            type='despesa', amount='200.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 - 200 = 800)
+        self._set_balance('800.00')
+
+        self.client.patch(self._detail_url(t.pk), {
+            'type': 'receita',
+            'category': self.category_receita.pk,
+        })
+        # 800 + 200 (reverte despesa) + 200 (aplica receita) = 1200
+        self.assertEqual(self._balance(), Decimal('1200.00'))
+
+    # --- PATCH: mudança de account ---
+
+    def test_patch_account_reverte_conta_antiga_e_aplica_na_nova(self):
+        """PATCH account em despesa paga deve reverter da conta antiga e debitar a nova."""
+        account2 = make_account(self.user, self.relative, 'Conta Dois')
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='300.00', is_paid=True,
+        )
+        # Simula saldo da conta1 pós-criação via API (1000 - 300 = 700)
+        self._set_balance('700.00')
+
+        self.client.patch(self._detail_url(t.pk), {'account': account2.pk})
+
+        # Conta antiga deve ser restaurada (reverte o débito)
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+        # Conta nova deve ter o débito aplicado (1000 - 300 = 700)
+        account2.refresh_from_db()
+        self.assertEqual(account2.balance, Decimal('700.00'))
+
+    # --- DELETE ---
+
+    def test_delete_despesa_paga_restaura_saldo(self):
+        """DELETE de despesa paga deve restaurar o saldo (reverte o débito)."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='400.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 - 400 = 600)
+        self._set_balance('600.00')
+
+        self.client.delete(self._detail_url(t.pk))
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_delete_receita_paga_reverte_credito(self):
+        """DELETE de receita paga deve reverter o crédito do saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_receita,
+            type='receita', amount='500.00', is_paid=True,
+        )
+        # Simula saldo pós-criação via API (1000 + 500 = 1500)
+        self._set_balance('1500.00')
+
+        self.client.delete(self._detail_url(t.pk))
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_delete_despesa_nao_paga_nao_altera_saldo(self):
+        """DELETE de despesa não paga não deve alterar o saldo."""
+        t = make_transaction(
+            self.user, self.relative, self.account, self.category_despesa,
+            amount='400.00', is_paid=False,
+        )
+        self.client.delete(self._detail_url(t.pk))
+        self.assertEqual(self._balance(), Decimal('1000.00'))
+
+    def test_delete_transferencia_paga_nao_altera_saldo(self):
+        """DELETE de transferência não deve alterar saldo (lógica de par na Parte 3)."""
+        t = make_transaction(
+            self.user, self.relative, self.account, None,
+            type='transferencia', amount='200.00', is_paid=True,
+        )
+        self.client.delete(self._detail_url(t.pk))
+        self.assertEqual(self._balance(), Decimal('1000.00'))
 
 
 # ===========================================================================

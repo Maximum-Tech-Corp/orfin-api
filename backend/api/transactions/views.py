@@ -1,13 +1,48 @@
+from decimal import Decimal
+from typing import Optional
+
+from django.db import transaction as db_transaction
+from django.db.models import F
 from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from backend.api.accounts.models import Account
 from backend.api.relatives.models import Relative
 
 from .models import RecurringRule, Transaction
 from .serializers import (RecurringRuleListSerializer, RecurringRuleSerializer,
                           TransactionListSerializer, TransactionSerializer)
+
+# ---------------------------------------------------------------------------
+# Helpers de saldo
+# ---------------------------------------------------------------------------
+
+
+def _balance_delta(transaction_type: str, amount: Decimal) -> Decimal:
+    """
+    Retorna o delta de saldo para uma transação paga.
+    Receita adiciona ao saldo; despesa subtrai.
+    Transferência retorna zero — tratada separadamente na Parte 3.
+    """
+    if transaction_type == 'receita':
+        return amount
+    if transaction_type == 'despesa':
+        return -amount
+    return Decimal('0')
+
+
+def _apply_balance(account_id: Optional[int], delta: Decimal) -> None:
+    """
+    Aplica um delta ao saldo da conta de forma atômica usando F().
+    Recebe o account_id diretamente para evitar carregar o objeto Account em memória.
+    Usar F() evita race conditions — nunca carrega o valor atual em memória.
+    """
+    if delta and account_id:
+        Account.objects.filter(pk=account_id).update(
+            balance=F('balance') + delta
+        )
 
 
 class TransactionViewSet(viewsets.ModelViewSet):
@@ -24,8 +59,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
     Requer header X-Relative-Id para todas as operações.
 
-    Nota: lógica de atualização de saldo (Parte 2) e transferências (Parte 3)
-    serão implementadas nas próximas etapas.
+    Parte 2: lógica de atualização de saldo em create, update e destroy.
+    Parte 3: transferências (transfer_pair_id) serão implementadas na próxima etapa.
     """
 
     queryset = Transaction.objects.all()
@@ -42,7 +77,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Filtra transações pelo usuário autenticado e pelo perfil (X-Relative-Id).
-        Na listagem, exclui transações arquivadas e aplica filtros opcionais de período e tipo.
+        Na listagem, aplica filtros opcionais de período, tipo, conta, categoria e status.
         """
         queryset = Transaction.objects.filter(user=self.request.user)
 
@@ -85,15 +120,95 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        """
+        Cria a transação e, se is_paid=True e houver conta vinculada,
+        atualiza o saldo da conta atomicamente.
+        Usa o padrão DRF de acesso direto ao serializer para obter a instância
+        sem query extra e sem avisos de tipo (response.data pode ser None).
+        Só afeta receitas e despesas — transferências serão tratadas na Parte 3.
+        """
+        with db_transaction.atomic():
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+
+            if (
+                instance.is_paid
+                and instance.account_id
+                and instance.type in ('receita', 'despesa')
+            ):
+                delta = _balance_delta(instance.type, instance.amount)
+                _apply_balance(instance.account_id, delta)
+
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def update(self, request, *args, **kwargs):
         """
-        Impede alteração direta dos campos de controle de par de transferência.
-        Nota: a lógica de reversão/aplicação de saldo será adicionada na Parte 2.
+        Atualiza a transação e recalcula o impacto no saldo da conta.
+
+        Cenários tratados:
+        - Mudança de is_paid (false→true aplica, true→false reverte)
+        - Mudança de amount (reverte antigo, aplica novo)
+        - Mudança de type (reverte direção antiga, aplica nova)
+        - Mudança de account (reverte da conta antiga, aplica na nova)
+        - Qualquer combinação acima, de forma atômica
+
+        Bloqueios:
+        - transfer_pair_id não pode ser alterado diretamente
+        - Transferências serão tratadas na Parte 3
         """
         if 'transfer_pair_id' in request.data:
             raise ValidationError(
                 {'transfer_pair_id': 'Este campo não pode ser alterado diretamente.'})
-        return super().update(request, *args, **kwargs)
+
+        with db_transaction.atomic():
+            # Captura o account_id e delta antigo antes de qualquer alteração
+            old = self.get_object()
+            old_account_id = old.account_id
+            old_delta = Decimal('0')
+            if old.is_paid and old_account_id and old.type in ('receita', 'despesa'):
+                old_delta = _balance_delta(old.type, old.amount)
+
+            response = super().update(request, *args, **kwargs)
+
+            # Recarrega apenas os campos necessários para calcular o novo delta
+            new = Transaction.objects.only(
+                'is_paid', 'account_id', 'type', 'amount'
+            ).get(pk=old.pk)
+            new_account_id = new.account_id
+            new_delta = Decimal('0')
+            if new.is_paid and new_account_id and new.type in ('receita', 'despesa'):
+                new_delta = _balance_delta(new.type, new.amount)
+
+            if old_account_id != new_account_id:
+                # Conta mudou: reverte da conta antiga e aplica na nova separadamente
+                _apply_balance(old_account_id, -old_delta)
+                _apply_balance(new_account_id, new_delta)
+            else:
+                # Mesma conta (ou ambas nulas): aplica apenas o delta líquido
+                net = new_delta - old_delta
+                _apply_balance(new_account_id, net)
+
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Hard delete da transação. Se estava paga e vinculada a uma conta,
+        reverte o delta no saldo antes de deletar.
+        Transferências (Parte 3) exigirão lógica adicional de par.
+        """
+        with db_transaction.atomic():
+            instance = self.get_object()
+            if (
+                instance.is_paid
+                and instance.account_id
+                and instance.type in ('receita', 'despesa')
+            ):
+                delta = _balance_delta(instance.type, instance.amount)
+                _apply_balance(instance.account_id, -delta)
+            return super().destroy(request, *args, **kwargs)
 
 
 class RecurringRuleViewSet(viewsets.ModelViewSet):
