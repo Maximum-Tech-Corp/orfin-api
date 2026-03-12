@@ -442,12 +442,13 @@ class TransactionAPITest(BaseAuthenticatedTestCase):
         self.assertEqual(response.data['type'], 'receita')  # type: ignore
 
     def test_create_transferencia_sem_category_retorna_201(self):
-        """POST com transferência sem categoria deve retornar 201."""
-        # transferencia não precisa de category — não passamos category aqui
+        """POST com transferência sem categoria deve retornar 201 (Parte 3: requer destination_account)."""
+        account_destino = make_account(self.user, self.relative, 'Poupança')
         data = get_transaction_data(
             account=self.account,
             type='transferencia',
             description='TED para poupança',
+            destination_account=account_destino.pk,
         )
         response = self.client.post(self.url_list, data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1058,3 +1059,301 @@ class RecurringRuleAPITest(BaseAuthenticatedTestCase):
 
         response = self.client.delete(self._detail_url(rule.pk))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+# ===========================================================================
+# TESTES DE TRANSFERÊNCIA — Parte 3
+# ===========================================================================
+
+class TransferAPITest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração da lógica de transferência (Parte 3).
+    Verifica criação de par (debit + credit), sincronização de campos
+    e atualização atômica de saldo em ambas as contas envolvidas.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+        self.url_list = reverse('transaction-list')
+        # Conta de origem com R$1.000 e conta de destino com R$500
+        self.origin = make_account(self.user, self.relative, 'Conta Origem')
+        self.destination = make_account(self.user, self.relative, 'Conta Destino')
+        # Diferencia os saldos iniciais para facilitar a verificação
+        self.destination.balance = Decimal('500.00')
+        self.destination.save()
+
+    def _detail_url(self, pk):
+        return reverse('transaction-detail', args=[pk])
+
+    def _balance(self, account):
+        """Recarrega e retorna o saldo atualizado da conta do banco."""
+        account.refresh_from_db()
+        return account.balance
+
+    def _set_balance(self, account, value):
+        """Define o saldo da conta diretamente (simula estado pós-criação via API)."""
+        account.balance = Decimal(str(value))
+        account.save()
+
+    def _create_transfer(self, amount='200.00', is_paid=True, **kwargs):
+        """Helper para criar transferência via API com destination_account padrão."""
+        data = get_transaction_data(
+            account=self.origin,
+            type='transferencia',
+            amount=amount,
+            is_paid=is_paid,
+            destination_account=self.destination.pk,
+            **kwargs,
+        )
+        return self.client.post(self.url_list, data)
+
+    # --- criação do par ---
+
+    def test_create_retorna_201(self):
+        """POST de transferência válida deve retornar 201."""
+        response = self._create_transfer()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_gera_dois_registros_no_banco(self):
+        """POST transferência deve criar exatamente 2 Transaction no banco."""
+        count_antes = Transaction.objects.count()
+        self._create_transfer()
+        self.assertEqual(Transaction.objects.count(), count_antes + 2)
+
+    def test_create_par_compartilha_transfer_pair_id(self):
+        """As duas transações geradas devem compartilhar o mesmo transfer_pair_id."""
+        self._create_transfer()
+        pair_ids = set(
+            Transaction.objects.filter(type='transferencia')
+            .values_list('transfer_pair_id', flat=True)
+        )
+        self.assertEqual(len(pair_ids), 1)
+        self.assertIsNotNone(list(pair_ids)[0])
+
+    def test_create_define_transfer_direction_corretamente(self):
+        """Origem deve ter transfer_direction='debit' e destino 'credit'."""
+        self._create_transfer()
+        debit = Transaction.objects.filter(
+            type='transferencia', transfer_direction='debit').first()
+        credit = Transaction.objects.filter(
+            type='transferencia', transfer_direction='credit').first()
+        self.assertIsNotNone(debit)
+        self.assertIsNotNone(credit)
+        self.assertEqual(debit.account, self.origin)
+        self.assertEqual(credit.account, self.destination)
+
+    def test_create_paga_debita_origem_e_credita_destino(self):
+        """Transferência paga deve debitar origem e creditar destino."""
+        self._create_transfer(amount='300.00', is_paid=True)
+        # Origem: 1000 - 300 = 700
+        self.assertEqual(self._balance(self.origin), Decimal('700.00'))
+        # Destino: 500 + 300 = 800
+        self.assertEqual(self._balance(self.destination), Decimal('800.00'))
+
+    def test_create_nao_paga_nao_altera_saldo(self):
+        """Transferência não paga não deve alterar nenhum saldo."""
+        self._create_transfer(amount='300.00', is_paid=False)
+        self.assertEqual(self._balance(self.origin), Decimal('1000.00'))
+        self.assertEqual(self._balance(self.destination), Decimal('500.00'))
+
+    def test_create_sem_destination_account_retorna_400(self):
+        """POST de transferência sem destination_account deve retornar 400."""
+        data = get_transaction_data(
+            account=self.origin,
+            type='transferencia',
+            amount='200.00',
+            is_paid=True,
+        )
+        response = self.client.post(self.url_list, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_destination_igual_origem_retorna_400(self):
+        """POST com destination_account igual à conta de origem deve retornar 400."""
+        data = get_transaction_data(
+            account=self.origin,
+            type='transferencia',
+            amount='200.00',
+            is_paid=True,
+            destination_account=self.origin.pk,
+        )
+        response = self.client.post(self.url_list, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_destination_de_outro_usuario_retorna_400(self):
+        """POST com destination_account de outro usuário deve retornar 400."""
+        other_user = self.create_additional_user()
+        other_relative = other_user.relatives.first()
+        other_account = make_account(other_user, other_relative, 'Conta Outro')
+
+        data = get_transaction_data(
+            account=self.origin,
+            type='transferencia',
+            amount='200.00',
+            is_paid=True,
+            destination_account=other_account.pk,
+        )
+        response = self.client.post(self.url_list, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # --- PATCH: bloqueios e sincronização ---
+
+    def test_patch_account_em_transferencia_retorna_400(self):
+        """PATCH alterando account de uma transferência deve retornar 400."""
+        self._create_transfer()
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        extra = make_account(self.user, self.relative, 'Conta Extra')
+
+        response = self.client.patch(
+            self._detail_url(debit.pk), {'account': extra.pk})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_amount_sincroniza_com_par(self):
+        """PATCH amount em uma perna deve atualizar o amount na perna par."""
+        self._create_transfer(amount='200.00', is_paid=False)
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+
+        self.client.patch(self._detail_url(debit.pk), {'amount': '350.00'})
+
+        credit = Transaction.objects.get(
+            type='transferencia', transfer_direction='credit')
+        self.assertEqual(credit.amount, Decimal('350.00'))
+
+    def test_patch_description_sincroniza_com_par(self):
+        """PATCH description em uma perna deve atualizar a perna par."""
+        self._create_transfer(description='TED original')
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+
+        self.client.patch(self._detail_url(debit.pk),
+                          {'description': 'TED atualizada'})
+
+        credit = Transaction.objects.get(
+            type='transferencia', transfer_direction='credit')
+        self.assertEqual(credit.description, 'TED atualizada')
+
+    def test_patch_is_paid_sincroniza_com_par(self):
+        """PATCH is_paid em uma perna deve sincronizar com a perna par."""
+        self._create_transfer(is_paid=False)
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+
+        self.client.patch(self._detail_url(debit.pk), {'is_paid': True})
+
+        credit = Transaction.objects.get(
+            type='transferencia', transfer_direction='credit')
+        self.assertTrue(credit.is_paid)
+
+    def test_patch_notes_sincroniza_com_par(self):
+        """PATCH notes em uma perna deve sincronizar com a perna par."""
+        self._create_transfer(is_paid=False)
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+
+        self.client.patch(self._detail_url(debit.pk),
+                          {'notes': 'Ref: TED-001'})
+
+        credit = Transaction.objects.get(
+            type='transferencia', transfer_direction='credit')
+        self.assertEqual(credit.notes, 'Ref: TED-001')
+
+    # --- PATCH: recálculo de saldo ---
+
+    def test_patch_amount_pago_recalcula_saldo_em_ambas(self):
+        """PATCH amount em transferência paga deve recalcular saldo de origem e destino."""
+        self._create_transfer(amount='200.00', is_paid=True)
+        # Saldos pós-criação via API: Origem 800 / Destino 700
+        self._set_balance(self.origin, '800.00')
+        self._set_balance(self.destination, '700.00')
+
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        self.client.patch(self._detail_url(debit.pk), {'amount': '350.00'})
+
+        # Origem: 800 + 200 (reverte) - 350 (aplica) = 650
+        self.assertEqual(self._balance(self.origin), Decimal('650.00'))
+        # Destino: 700 - 200 (reverte) + 350 (aplica) = 850
+        self.assertEqual(self._balance(self.destination), Decimal('850.00'))
+
+    def test_patch_is_paid_false_para_true_aplica_saldo_em_ambas(self):
+        """PATCH is_paid false→true deve debitar origem e creditar destino."""
+        self._create_transfer(amount='300.00', is_paid=False)
+
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        self.client.patch(self._detail_url(debit.pk), {'is_paid': True})
+
+        # Origem: 1000 - 300 = 700 / Destino: 500 + 300 = 800
+        self.assertEqual(self._balance(self.origin), Decimal('700.00'))
+        self.assertEqual(self._balance(self.destination), Decimal('800.00'))
+
+    def test_patch_is_paid_true_para_false_reverte_saldo_de_ambas(self):
+        """PATCH is_paid true→false deve reverter saldo de origem e destino."""
+        self._create_transfer(amount='300.00', is_paid=True)
+        # Saldos pós-criação via API: Origem 700 / Destino 800
+        self._set_balance(self.origin, '700.00')
+        self._set_balance(self.destination, '800.00')
+
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        self.client.patch(self._detail_url(debit.pk), {'is_paid': False})
+
+        # Origem: 700 + 300 = 1000 (revertido) / Destino: 800 - 300 = 500 (revertido)
+        self.assertEqual(self._balance(self.origin), Decimal('1000.00'))
+        self.assertEqual(self._balance(self.destination), Decimal('500.00'))
+
+    # --- DELETE do par ---
+
+    def test_delete_remove_ambas_as_transacoes(self):
+        """DELETE de uma perna deve remover as duas transações do banco."""
+        self._create_transfer()
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        pair_id = debit.transfer_pair_id
+
+        response = self.client.delete(self._detail_url(debit.pk))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(
+            Transaction.objects.filter(transfer_pair_id=pair_id).count(), 0)
+
+    def test_delete_pelo_lado_credit_tambem_remove_par(self):
+        """DELETE pela perna credit também deve remover ambas as transações."""
+        self._create_transfer()
+        credit = Transaction.objects.get(
+            type='transferencia', transfer_direction='credit')
+        pair_id = credit.transfer_pair_id
+
+        response = self.client.delete(self._detail_url(credit.pk))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(
+            Transaction.objects.filter(transfer_pair_id=pair_id).count(), 0)
+
+    def test_delete_paga_reverte_saldo_de_ambas(self):
+        """DELETE de transferência paga deve reverter saldo de origem e destino."""
+        self._create_transfer(amount='200.00', is_paid=True)
+        # Saldos pós-criação via API: Origem 800 / Destino 700
+        self._set_balance(self.origin, '800.00')
+        self._set_balance(self.destination, '700.00')
+
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        self.client.delete(self._detail_url(debit.pk))
+
+        # Origem: 800 + 200 = 1000 (revertido) / Destino: 700 - 200 = 500 (revertido)
+        self.assertEqual(self._balance(self.origin), Decimal('1000.00'))
+        self.assertEqual(self._balance(self.destination), Decimal('500.00'))
+
+    def test_delete_nao_paga_nao_altera_saldo(self):
+        """DELETE de transferência não paga não deve alterar nenhum saldo."""
+        self._create_transfer(amount='200.00', is_paid=False)
+
+        debit = Transaction.objects.get(
+            type='transferencia', transfer_direction='debit')
+        self.client.delete(self._detail_url(debit.pk))
+
+        self.assertEqual(self._balance(self.origin), Decimal('1000.00'))
+        self.assertEqual(self._balance(self.destination), Decimal('500.00'))

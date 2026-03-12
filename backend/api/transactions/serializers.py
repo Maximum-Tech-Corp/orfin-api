@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from backend.api.accounts.models import Account
 from backend.api.relatives.models import Relative
 
 from .models import RecurringRule, Transaction
@@ -9,6 +10,7 @@ class TransactionListSerializer(serializers.ModelSerializer):
     """
     Serializer compacto para listagem de transações.
     Expõe campos essenciais para o dashboard e extratos, sem dados aninhados pesados.
+    Inclui transfer_direction para o frontend distinguir entrada/saída de transferências.
     """
 
     # Campos de exibição para evitar requisições adicionais na lista
@@ -20,6 +22,7 @@ class TransactionListSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'type',
+            'transfer_direction',
             'amount',
             'description',
             'date',
@@ -34,8 +37,10 @@ class TransactionListSerializer(serializers.ModelSerializer):
 class TransactionSerializer(serializers.ModelSerializer):
     """
     Serializer completo para criação, edição e recuperação de transações.
-    Inclui validações de negócio da Parte 1 (estrutura base).
-    Validações de saldo (Parte 2) e transferências (Parte 3) serão adicionadas nas views.
+
+    Campo especial de escrita (não persiste no model diretamente):
+    - destination_account: obrigatório ao criar uma transferência; indica a conta de destino.
+      A view usa este campo para criar o par de transações atomicamente.
     """
 
     # Campos de exibição read-only para contexto sem requisições extras
@@ -45,6 +50,14 @@ class TransactionSerializer(serializers.ModelSerializer):
         source='recurring_rule.description', read_only=True, allow_null=True
     )
 
+    # Campo write-only usado apenas na criação de transferências
+    destination_account = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Transaction
         fields = '__all__'
@@ -52,6 +65,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             'user',
             'relative',
             'transfer_pair_id',
+            'transfer_direction',
             'created_at',
             'updated_at',
             'account_name',
@@ -73,9 +87,9 @@ class TransactionSerializer(serializers.ModelSerializer):
         Validações que dependem de múltiplos campos:
         - category obrigatória para receita e despesa
         - campos de parcelamento consistentes
-        - account obrigatória para transações avulsas (constraint account XOR invoice na Parte 5)
+        - destination_account obrigatório e diferente da origem para transferências novas
+        - destination_account deve pertencer ao mesmo usuário
         """
-        # Determina o tipo considerando updates parciais (PATCH)
         transaction_type = data.get('type') or (self.instance and self.instance.type)
         category = data.get('category') if 'category' in data else (self.instance and self.instance.category)
 
@@ -83,6 +97,27 @@ class TransactionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'category': 'Categoria é obrigatória para receitas e despesas.'
             })
+
+        # Validações específicas para criação de transferência (não se aplica ao update)
+        if transaction_type == 'transferencia' and not self.instance:
+            destination_account = data.get('destination_account')
+            if not destination_account:
+                raise serializers.ValidationError({
+                    'destination_account': 'Conta de destino é obrigatória para transferências.'
+                })
+
+            origin_account = data.get('account')
+            if origin_account and origin_account == destination_account:
+                raise serializers.ValidationError({
+                    'destination_account': 'Conta de destino deve ser diferente da conta de origem.'
+                })
+
+            # Garante que a conta de destino pertence ao usuário autenticado
+            user = self.context['request'].user
+            if not Account.objects.filter(pk=destination_account.pk, user=user).exists():
+                raise serializers.ValidationError({
+                    'destination_account': 'Conta de destino não encontrada ou não pertence ao usuário.'
+                })
 
         # Valida consistência dos campos de parcelamento
         installment_number = data.get('installment_number')
@@ -104,6 +139,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Associa automaticamente o usuário autenticado e o perfil do header X-Relative-Id.
+        destination_account é extraído pela view antes de chamar save() — não chega aqui.
         """
         validated_data['user'] = self.context['request'].user
 

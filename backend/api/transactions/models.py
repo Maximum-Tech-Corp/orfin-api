@@ -200,6 +200,15 @@ class Transaction(models.Model):
     transfer_pair_id = models.UUIDField(
         null=True, blank=True, verbose_name='ID do Par de Transferência'
     )
+    # 'debit' = leg de saída (origem); 'credit' = leg de entrada (destino)
+    # Necessário para reverter o saldo corretamente no delete/update
+    transfer_direction = models.CharField(
+        max_length=6,
+        choices=[('debit', 'Débito'), ('credit', 'Crédito')],
+        null=True,
+        blank=True,
+        verbose_name='Direção da Transferência'
+    )
     # UUID compartilhado entre parcelas de uma compra parcelada no cartão
     installment_group_id = models.UUIDField(
         null=True, blank=True, verbose_name='ID do Grupo de Parcelas'

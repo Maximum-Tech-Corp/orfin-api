@@ -445,3 +445,24 @@ Executar servidor ou testes normalmente — a execução pausará no breakpoint.
 - O modelo `User` é o modelo de autenticação customizado do sistema e substitui o `User` padrão do Django
 - Validações de unicidade por usuário devem ser feitas no serializer (`validate_<campo>`) para retornar HTTP 400 com mensagem amigável, não depender apenas do `unique_together` do banco (que gera erro 500)
 - Ao criar nova entidade que use `X-Relative-Id`, seguir o padrão de `AccountSerializer` e `AccountViewSet` como referência
+
+## Formato Obrigatório de Resumo
+
+Ao finalizar qualquer geração de código, o resumo deve ser formatado em Markdown (`.md`) para que o usuário possa copiar e colar diretamente em um arquivo `.md`. Usar o seguinte padrão:
+
+```markdown
+## Resumo das Alterações
+
+### O que foi feito
+- Item 1
+- Item 2
+
+### Arquivos criados
+- `caminho/do/arquivo.py` — descrição
+
+### Arquivos modificados
+- `caminho/do/arquivo.py` — descrição da alteração
+
+### Próximos passos (se houver)
+- Passo 1
+```
