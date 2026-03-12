@@ -1357,3 +1357,880 @@ class TransferAPITest(BaseAuthenticatedTestCase):
 
         self.assertEqual(self._balance(self.origin), Decimal('1000.00'))
         self.assertEqual(self._balance(self.destination), Decimal('500.00'))
+
+
+# ===========================================================================
+# TESTES — Parte 4: Recorrência (helpers, geração, API)
+# ===========================================================================
+
+from backend.api.transactions.views import (  # noqa: E402
+    _add_months,
+    _generate_instances,
+    _next_occurrence,
+    _nth_occurrence_date,
+)
+
+
+class RecurringHelpersTest(TestCase):
+    """
+    Testes unitários das funções auxiliares de data para recorrência.
+    Valida cálculos de _add_months e _next_occurrence diretamente.
+    """
+
+    # --- _add_months ---
+
+    def test_add_months_normal(self):
+        """Soma de meses em dia que existe no mês destino."""
+        result = _add_months(datetime.date(2026, 1, 15), 1)
+        self.assertEqual(result, datetime.date(2026, 2, 15))
+
+    def test_add_months_janeiro_31_mais_um(self):
+        """Jan/31 + 1 mês deve retornar fev/28 (não fev/31)."""
+        result = _add_months(datetime.date(2026, 1, 31), 1)
+        self.assertEqual(result, datetime.date(2026, 2, 28))
+
+    def test_add_months_bissexto(self):
+        """Jan/31 + 1 mês em ano bissexto deve retornar fev/29."""
+        result = _add_months(datetime.date(2024, 1, 31), 1)
+        self.assertEqual(result, datetime.date(2024, 2, 29))
+
+    def test_add_months_virada_de_ano(self):
+        """Nov + 3 meses deve cruzar o ano corretamente."""
+        result = _add_months(datetime.date(2026, 11, 15), 3)
+        self.assertEqual(result, datetime.date(2027, 2, 15))
+
+    def test_add_months_doze(self):
+        """Soma de 12 meses incrementa um ano."""
+        result = _add_months(datetime.date(2026, 3, 1), 12)
+        self.assertEqual(result, datetime.date(2027, 3, 1))
+
+    # --- _next_occurrence ---
+
+    def test_next_occurrence_daily(self):
+        """Frequência diária com intervalo 1 avança 1 dia."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'daily', 1)
+        self.assertEqual(result, datetime.date(2026, 3, 2))
+
+    def test_next_occurrence_daily_interval_3(self):
+        """Frequência diária com intervalo 3 avança 3 dias."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'daily', 3)
+        self.assertEqual(result, datetime.date(2026, 3, 4))
+
+    def test_next_occurrence_weekly(self):
+        """Frequência semanal com intervalo 1 avança 7 dias."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'weekly', 1)
+        self.assertEqual(result, datetime.date(2026, 3, 8))
+
+    def test_next_occurrence_weekly_interval_2(self):
+        """Frequência semanal com intervalo 2 avança 14 dias."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'weekly', 2)
+        self.assertEqual(result, datetime.date(2026, 3, 15))
+
+    def test_next_occurrence_monthly(self):
+        """Frequência mensal com intervalo 1 avança 1 mês."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'monthly', 1)
+        self.assertEqual(result, datetime.date(2026, 4, 1))
+
+    def test_next_occurrence_monthly_dia_31(self):
+        """Frequência mensal a partir de dia 31 ajusta para último dia do mês."""
+        result = _next_occurrence(datetime.date(2026, 1, 31), 'monthly', 1)
+        self.assertEqual(result, datetime.date(2026, 2, 28))
+
+    def test_next_occurrence_yearly(self):
+        """Frequência anual com intervalo 1 avança 1 ano."""
+        result = _next_occurrence(datetime.date(2026, 3, 1), 'yearly', 1)
+        self.assertEqual(result, datetime.date(2027, 3, 1))
+
+    def test_next_occurrence_yearly_bissexto_para_nao_bissexto(self):
+        """Fev/29 (bissexto) + 1 ano ajusta para fev/28."""
+        result = _next_occurrence(datetime.date(2024, 2, 29), 'yearly', 1)
+        self.assertEqual(result, datetime.date(2025, 2, 28))
+
+
+class RecurringGenerationTest(BaseAuthenticatedTestCase):
+    """
+    Testes unitários das funções _nth_occurrence_date e _generate_instances.
+    Verifica que instâncias são geradas corretamente e duplicatas são evitadas.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = make_account(self.user, self.relative)
+        self.category = make_category(self.user, self.relative)
+        self.rule = make_recurring_rule(
+            self.user, self.relative,
+            account=self.account,
+            category=self.category,
+            start_date=datetime.date(2026, 3, 1),
+            frequency='monthly',
+            interval=1,
+            amount='500.00',
+        )
+
+    # --- _nth_occurrence_date ---
+
+    def test_nth_occurrence_date_primeira(self):
+        """N=1 deve retornar start_date."""
+        result = _nth_occurrence_date(self.rule, 1)
+        self.assertEqual(result, datetime.date(2026, 3, 1))
+
+    def test_nth_occurrence_date_terceira(self):
+        """N=3 em frequência mensal deve retornar o 3º mês."""
+        result = _nth_occurrence_date(self.rule, 3)
+        self.assertEqual(result, datetime.date(2026, 5, 1))
+
+    def test_nth_occurrence_date_sexta(self):
+        """N=6 em frequência mensal deve retornar o 6º mês."""
+        result = _nth_occurrence_date(self.rule, 6)
+        self.assertEqual(result, datetime.date(2026, 8, 1))
+
+    # --- _generate_instances ---
+
+    def test_generate_instances_cria_registros(self):
+        """Deve criar instâncias de Transaction para o intervalo informado."""
+        from_date = datetime.date(2026, 3, 1)
+        to_date = datetime.date(2026, 5, 1)
+        count = _generate_instances(self.rule, from_date, to_date)
+        self.assertEqual(count, 3)
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 3
+        )
+
+    def test_generate_instances_datas_corretas(self):
+        """As instâncias criadas devem ter as datas mensais corretas."""
+        _generate_instances(
+            self.rule,
+            datetime.date(2026, 3, 1),
+            datetime.date(2026, 5, 1),
+        )
+        dates = set(
+            Transaction.objects.filter(recurring_rule=self.rule)
+            .values_list('date', flat=True)
+        )
+        expected = {
+            datetime.date(2026, 3, 1),
+            datetime.date(2026, 4, 1),
+            datetime.date(2026, 5, 1),
+        }
+        self.assertEqual(dates, expected)
+
+    def test_generate_instances_pula_existentes(self):
+        """Não deve criar duplicatas se já houver instância na data."""
+        # Cria a primeira instância manualmente
+        make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            date=datetime.date(2026, 3, 1),
+        )
+        count = _generate_instances(
+            self.rule,
+            datetime.date(2026, 3, 1),
+            datetime.date(2026, 5, 1),
+        )
+        # Apenas abr e mai devem ser criados (mar já existia)
+        self.assertEqual(count, 2)
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 3
+        )
+
+    def test_generate_instances_retorna_zero_sem_intervalo(self):
+        """Deve retornar 0 quando from_date > to_date."""
+        count = _generate_instances(
+            self.rule,
+            datetime.date(2026, 6, 1),
+            datetime.date(2026, 5, 1),
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 0
+        )
+
+    def test_generate_instances_campos_da_regra(self):
+        """As instâncias devem herdar campos da regra (tipo, valor, descrição)."""
+        _generate_instances(
+            self.rule,
+            datetime.date(2026, 3, 1),
+            datetime.date(2026, 3, 1),
+        )
+        t = Transaction.objects.get(recurring_rule=self.rule)
+        self.assertEqual(t.type, self.rule.type)
+        self.assertEqual(t.amount, Decimal(str(self.rule.amount)))
+        self.assertEqual(t.description, self.rule.description)
+        self.assertFalse(t.is_paid)
+
+
+class RecurringRuleCreateAPITest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração para criação de RecurringRule via API.
+    Verifica geração automática de instâncias de Transaction ao criar a regra.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = make_account(self.user, self.relative)
+        self.category = make_category(self.user, self.relative)
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+        self.url = reverse('recurring-rule-list')
+
+    def _post_rule(self, **overrides):
+        from backend.api.tests.constants import get_recurring_rule_data
+        data = get_recurring_rule_data(
+            account=self.account,
+            category=self.category,
+            **overrides,
+        )
+        return self.client.post(self.url, data, format='json')
+
+    def test_create_com_occurrences_count_gera_instancias(self):
+        """Criar regra com occurrences_count=3 deve gerar exatamente 3 instâncias."""
+        response = self._post_rule(
+            start_date='2026-03-01',
+            occurrences_count=3,
+            frequency='monthly',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rule = RecurringRule.objects.get(pk=response.data['id'])
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=rule).count(), 3
+        )
+
+    def test_create_com_occurrences_count_datas_corretas(self):
+        """As 3 instâncias devem ter datas mensais de mar, abr e mai/2026."""
+        response = self._post_rule(
+            start_date='2026-03-01',
+            occurrences_count=3,
+            frequency='monthly',
+        )
+        rule = RecurringRule.objects.get(pk=response.data['id'])
+        dates = set(
+            Transaction.objects.filter(recurring_rule=rule)
+            .values_list('date', flat=True)
+        )
+        expected = {
+            datetime.date(2026, 3, 1),
+            datetime.date(2026, 4, 1),
+            datetime.date(2026, 5, 1),
+        }
+        self.assertEqual(dates, expected)
+
+    def test_create_com_end_date_gera_instancias(self):
+        """Criar regra com end_date deve gerar instâncias até a data de encerramento."""
+        response = self._post_rule(
+            start_date='2026-03-01',
+            end_date='2026-05-01',
+            frequency='monthly',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rule = RecurringRule.objects.get(pk=response.data['id'])
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=rule).count(), 3
+        )
+
+    def test_create_indefinida_gera_para_12_meses(self):
+        """Regra sem end_date nem occurrences_count deve gerar instâncias para os próximos 12 meses."""
+        today = datetime.date.today()
+        response = self._post_rule(
+            start_date=str(today),
+            frequency='monthly',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rule = RecurringRule.objects.get(pk=response.data['id'])
+        count = Transaction.objects.filter(recurring_rule=rule).count()
+        # Deve gerar entre 12 e 13 instâncias (dependendo do dia)
+        self.assertGreaterEqual(count, 12)
+        self.assertLessEqual(count, 13)
+
+    def test_create_retorna_201(self):
+        """POST de regra válida deve retornar 201 Created."""
+        response = self._post_rule(start_date='2026-03-01', occurrences_count=2)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_sem_relative_header_retorna_400(self):
+        """Criar regra sem o header X-Relative-Id deve retornar 400."""
+        del self.client.defaults['HTTP_X_RELATIVE_ID']
+        response = self._post_rule(start_date='2026-03-01', occurrences_count=2)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_end_date_e_occurrences_count_retorna_400(self):
+        """Informar end_date E occurrences_count deve retornar 400."""
+        response = self._post_rule(
+            start_date='2026-03-01',
+            end_date='2026-06-01',
+            occurrences_count=3,
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_destroy_soft_deleta_regra(self):
+        """DELETE de regra deve desativá-la (is_active=False), não deletar fisicamente."""
+        response = self._post_rule(start_date='2026-03-01', occurrences_count=2)
+        rule_id = response.data['id']
+        url = reverse('recurring-rule-detail', args=[rule_id])
+        resp = self.client.delete(url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        rule = RecurringRule.objects.get(pk=rule_id)
+        self.assertFalse(rule.is_active)
+
+
+class RecurringOnDemandTest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração para geração on-demand de instâncias na listagem.
+    Verifica que o GET /transactions/?month=&year= dispara _ensure_horizon
+    apenas para regras indefinidas ativas.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = make_account(self.user, self.relative)
+        self.category = make_category(self.user, self.relative)
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+        self.list_url = reverse('transaction-list')
+
+        # Regra indefinida ativa (sem end_date e sem occurrences_count)
+        self.rule = make_recurring_rule(
+            self.user, self.relative,
+            account=self.account,
+            category=self.category,
+            start_date=datetime.date.today(),
+            frequency='monthly',
+        )
+
+    def test_list_com_month_e_year_gera_instancias(self):
+        """GET com month e year deve disparar geração on-demand para regras indefinidas."""
+        today = datetime.date.today()
+        response = self.client.get(
+            self.list_url,
+            {'month': today.month, 'year': today.year},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        count = Transaction.objects.filter(recurring_rule=self.rule).count()
+        self.assertGreater(count, 0)
+
+    def test_list_sem_month_nao_gera_instancias(self):
+        """GET sem month não deve disparar geração on-demand."""
+        today = datetime.date.today()
+        self.client.get(self.list_url, {'year': today.year})
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 0
+        )
+
+    def test_list_sem_year_nao_gera_instancias(self):
+        """GET sem year não deve disparar geração on-demand."""
+        today = datetime.date.today()
+        self.client.get(self.list_url, {'month': today.month})
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 0
+        )
+
+    def test_list_regra_inativa_nao_gera(self):
+        """Regra inativa não deve ter instâncias geradas on-demand."""
+        RecurringRule.objects.filter(pk=self.rule.pk).update(is_active=False)
+        today = datetime.date.today()
+        self.client.get(
+            self.list_url,
+            {'month': today.month, 'year': today.year},
+        )
+        self.assertEqual(
+            Transaction.objects.filter(recurring_rule=self.rule).count(), 0
+        )
+
+    def test_list_nao_cria_duplicatas_em_chamadas_consecutivas(self):
+        """Chamadas consecutivas não devem duplicar instâncias existentes."""
+        today = datetime.date.today()
+        params = {'month': today.month, 'year': today.year}
+        self.client.get(self.list_url, params)
+        count_after_first = Transaction.objects.filter(
+            recurring_rule=self.rule
+        ).count()
+        self.client.get(self.list_url, params)
+        count_after_second = Transaction.objects.filter(
+            recurring_rule=self.rule
+        ).count()
+        self.assertEqual(count_after_first, count_after_second)
+
+
+class RecurringEditAPITest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração para o endpoint POST /transactions/{pk}/edit_recurring/.
+    Valida os três escopos: esta, esta_e_futuras, todas.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = make_account(self.user, self.relative)
+        self.category = make_category(self.user, self.relative)
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+
+        # Regra com 3 instâncias não pagas
+        self.rule = make_recurring_rule(
+            self.user, self.relative,
+            account=self.account,
+            category=self.category,
+            start_date=datetime.date(2026, 3, 1),
+            frequency='monthly',
+            interval=1,
+            amount='500.00',
+            description='Aluguel',
+        )
+        self.t1 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 3, 1),
+            is_paid=False,
+        )
+        self.t2 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 4, 1),
+            is_paid=False,
+        )
+        self.t3 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 5, 1),
+            is_paid=False,
+        )
+
+    def _edit_url(self, pk):
+        return reverse('transaction-edit-recurring', args=[pk])
+
+    # --- scope: esta ---
+
+    def test_edit_esta_retorna_200(self):
+        """POST com scope='esta' deve retornar 200."""
+        response = self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'esta', 'amount': '600.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_edit_esta_atualiza_apenas_esta_instancia(self):
+        """scope='esta' deve alterar só a instância selecionada."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'esta', 'amount': '600.00'},
+            format='json',
+        )
+        self.t1.refresh_from_db()
+        self.t2.refresh_from_db()
+        self.assertEqual(self.t1.amount, Decimal('600.00'))
+        self.assertEqual(self.t2.amount, Decimal('500.00'))
+
+    def test_edit_esta_desassocia_da_regra(self):
+        """scope='esta' deve setar recurring_rule=None na instância editada."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'esta', 'description': 'Aluguel ajustado'},
+            format='json',
+        )
+        self.t1.refresh_from_db()
+        self.assertIsNone(self.t1.recurring_rule)
+
+    def test_edit_esta_nao_altera_outras_instancias(self):
+        """scope='esta' não deve modificar t2 nem t3."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'esta', 'amount': '999.00'},
+            format='json',
+        )
+        self.t2.refresh_from_db()
+        self.t3.refresh_from_db()
+        self.assertEqual(self.t2.amount, Decimal('500.00'))
+        self.assertEqual(self.t3.amount, Decimal('500.00'))
+
+    # --- scope: esta_e_futuras ---
+
+    def test_edit_esta_e_futuras_atualiza_regra(self):
+        """scope='esta_e_futuras' deve atualizar o amount na RecurringRule."""
+        self.client.post(
+            self._edit_url(self.t2.pk),
+            {'scope': 'esta_e_futuras', 'amount': '700.00'},
+            format='json',
+        )
+        self.rule.refresh_from_db()
+        self.assertEqual(self.rule.amount, Decimal('700.00'))
+
+    def test_edit_esta_e_futuras_remove_instancias_futuras_nao_pagas(self):
+        """scope='esta_e_futuras' deve deletar t2 e t3 (>= t2.date, não pagas)."""
+        self.client.post(
+            self._edit_url(self.t2.pk),
+            {'scope': 'esta_e_futuras', 'amount': '700.00'},
+            format='json',
+        )
+        self.assertFalse(Transaction.objects.filter(pk=self.t2.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t3.pk).exists())
+
+    def test_edit_esta_e_futuras_mantem_instancias_anteriores(self):
+        """scope='esta_e_futuras' não deve remover t1 (anterior a t2.date)."""
+        self.client.post(
+            self._edit_url(self.t2.pk),
+            {'scope': 'esta_e_futuras', 'amount': '700.00'},
+            format='json',
+        )
+        self.assertTrue(Transaction.objects.filter(pk=self.t1.pk).exists())
+
+    def test_edit_esta_e_futuras_regenera_instancias(self):
+        """scope='esta_e_futuras' deve regenerar instâncias a partir de t2.date."""
+        self.client.post(
+            self._edit_url(self.t2.pk),
+            {'scope': 'esta_e_futuras', 'amount': '700.00'},
+            format='json',
+        )
+        # Deve existir pelo menos uma instância nova com o valor atualizado
+        count = Transaction.objects.filter(
+            recurring_rule=self.rule,
+            amount=Decimal('700.00'),
+        ).count()
+        self.assertGreater(count, 0)
+
+    def test_edit_esta_e_futuras_nao_altera_pagas(self):
+        """scope='esta_e_futuras' não deve deletar instâncias pagas."""
+        self.t2.is_paid = True
+        self.t2.save()
+        self.client.post(
+            self._edit_url(self.t3.pk),
+            {'scope': 'esta_e_futuras', 'amount': '700.00'},
+            format='json',
+        )
+        # t2 está paga e tem data < t3.date, portanto não deve ser deletada
+        self.assertTrue(Transaction.objects.filter(pk=self.t2.pk).exists())
+
+    # --- scope: todas ---
+
+    def test_edit_todas_atualiza_regra(self):
+        """scope='todas' deve atualizar o amount na RecurringRule."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'todas', 'amount': '800.00'},
+            format='json',
+        )
+        self.rule.refresh_from_db()
+        self.assertEqual(self.rule.amount, Decimal('800.00'))
+
+    def test_edit_todas_remove_todas_instancias_nao_pagas(self):
+        """scope='todas' deve deletar todas as instâncias não pagas da regra."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'todas', 'amount': '800.00'},
+            format='json',
+        )
+        # Todas as instâncias originais (não pagas) devem ter sido deletadas
+        self.assertFalse(Transaction.objects.filter(pk=self.t1.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t2.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t3.pk).exists())
+
+    def test_edit_todas_regenera_instancias(self):
+        """scope='todas' deve regenerar instâncias desde start_date com novo valor."""
+        self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'todas', 'amount': '800.00'},
+            format='json',
+        )
+        count = Transaction.objects.filter(
+            recurring_rule=self.rule,
+            amount=Decimal('800.00'),
+        ).count()
+        self.assertGreater(count, 0)
+
+    def test_edit_todas_nao_deleta_pagas(self):
+        """scope='todas' não deve deletar instâncias pagas."""
+        self.t1.is_paid = True
+        self.t1.save()
+        self.client.post(
+            self._edit_url(self.t2.pk),
+            {'scope': 'todas', 'amount': '800.00'},
+            format='json',
+        )
+        self.assertTrue(Transaction.objects.filter(pk=self.t1.pk).exists())
+
+    # --- validação de escopo ---
+
+    def test_edit_escopo_invalido_retorna_400(self):
+        """Escopo inválido deve retornar 400."""
+        response = self.client.post(
+            self._edit_url(self.t1.pk),
+            {'scope': 'invalido', 'amount': '600.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_edit_sem_escopo_retorna_400(self):
+        """Omitir o campo scope deve retornar 400."""
+        response = self.client.post(
+            self._edit_url(self.t1.pk),
+            {'amount': '600.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_edit_esta_e_futuras_sem_regra_retorna_400(self):
+        """Transação avulsa (sem recurring_rule) com scope='esta_e_futuras' deve retornar 400."""
+        t_avulsa = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            date=datetime.date(2026, 6, 1),
+        )
+        response = self.client.post(
+            self._edit_url(t_avulsa.pk),
+            {'scope': 'esta_e_futuras', 'amount': '600.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RecurringDeleteAPITest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração para o endpoint DELETE /transactions/{pk}/delete_recurring/.
+    Valida os três escopos: esta, esta_e_futuras, todas.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = make_account(self.user, self.relative)
+        self.category = make_category(self.user, self.relative)
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = str(self.relative.id)
+
+        self.rule = make_recurring_rule(
+            self.user, self.relative,
+            account=self.account,
+            category=self.category,
+            start_date=datetime.date(2026, 3, 1),
+            frequency='monthly',
+            interval=1,
+            amount='500.00',
+            description='Aluguel',
+        )
+        self.t1 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 3, 1),
+            is_paid=False,
+        )
+        self.t2 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 4, 1),
+            is_paid=False,
+        )
+        self.t3 = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            recurring_rule=self.rule,
+            type='despesa',
+            amount='500.00',
+            description='Aluguel',
+            date=datetime.date(2026, 5, 1),
+            is_paid=False,
+        )
+
+    def _delete_url(self, pk):
+        return reverse('transaction-delete-recurring', args=[pk])
+
+    def _balance(self):
+        self.account.refresh_from_db()
+        return self.account.balance
+
+    # --- scope: esta ---
+
+    def test_delete_esta_retorna_204(self):
+        """DELETE com scope='esta' deve retornar 204 No Content."""
+        response = self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'esta'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_delete_esta_remove_apenas_esta_instancia(self):
+        """scope='esta' deve deletar apenas t1, mantendo t2 e t3."""
+        self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'esta'},
+            format='json',
+        )
+        self.assertFalse(Transaction.objects.filter(pk=self.t1.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=self.t2.pk).exists())
+        self.assertTrue(Transaction.objects.filter(pk=self.t3.pk).exists())
+
+    def test_delete_esta_paga_reverte_saldo(self):
+        """scope='esta' em transação paga deve reverter o saldo da conta."""
+        # Marca t1 como paga e aplica o saldo manualmente
+        self.t1.is_paid = True
+        self.t1.save()
+        Account.objects.filter(pk=self.account.pk).update(
+            balance=Decimal(str(self.account.balance)) - Decimal('500.00')
+        )
+        saldo_antes = self._balance()
+
+        self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'esta'},
+            format='json',
+        )
+        self.assertEqual(self._balance(), saldo_antes + Decimal('500.00'))
+
+    def test_delete_esta_nao_paga_nao_altera_saldo(self):
+        """scope='esta' em transação não paga não deve alterar saldo."""
+        saldo_antes = self._balance()
+        self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'esta'},
+            format='json',
+        )
+        self.assertEqual(self._balance(), saldo_antes)
+
+    # --- scope: esta_e_futuras ---
+
+    def test_delete_esta_e_futuras_retorna_200(self):
+        """DELETE com scope='esta_e_futuras' deve retornar 200."""
+        response = self.client.delete(
+            self._delete_url(self.t2.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_delete_esta_e_futuras_remove_futuras_nao_pagas(self):
+        """scope='esta_e_futuras' deve remover t2 e t3 (>= t2.date, não pagas)."""
+        self.client.delete(
+            self._delete_url(self.t2.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        self.assertFalse(Transaction.objects.filter(pk=self.t2.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t3.pk).exists())
+
+    def test_delete_esta_e_futuras_mantem_anteriores(self):
+        """scope='esta_e_futuras' não deve remover t1 (anterior a t2.date)."""
+        self.client.delete(
+            self._delete_url(self.t2.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        self.assertTrue(Transaction.objects.filter(pk=self.t1.pk).exists())
+
+    def test_delete_esta_e_futuras_encerra_regra(self):
+        """scope='esta_e_futuras' deve setar end_date na regra como t2.date - 1 dia."""
+        self.client.delete(
+            self._delete_url(self.t2.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        self.rule.refresh_from_db()
+        expected_end = datetime.date(2026, 4, 1) - datetime.timedelta(days=1)
+        self.assertEqual(self.rule.end_date, expected_end)
+
+    def test_delete_esta_e_futuras_nao_remove_pagas(self):
+        """scope='esta_e_futuras' não deve remover instâncias pagas."""
+        self.t2.is_paid = True
+        self.t2.save()
+        self.client.delete(
+            self._delete_url(self.t3.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        # t2 está paga — não deve ser removida mesmo que sua data >= t3.date
+        # Nota: t3.date > t2.date, então t2 não está em date__gte=t3.date de qualquer forma
+        self.assertTrue(Transaction.objects.filter(pk=self.t2.pk).exists())
+
+    # --- scope: todas ---
+
+    def test_delete_todas_retorna_200(self):
+        """DELETE com scope='todas' deve retornar 200."""
+        response = self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'todas'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_delete_todas_desativa_regra(self):
+        """scope='todas' deve setar is_active=False na RecurringRule."""
+        self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'todas'},
+            format='json',
+        )
+        self.rule.refresh_from_db()
+        self.assertFalse(self.rule.is_active)
+
+    def test_delete_todas_remove_nao_pagas(self):
+        """scope='todas' deve remover todas as instâncias não pagas da regra."""
+        self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'todas'},
+            format='json',
+        )
+        self.assertFalse(Transaction.objects.filter(pk=self.t1.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t2.pk).exists())
+        self.assertFalse(Transaction.objects.filter(pk=self.t3.pk).exists())
+
+    def test_delete_todas_nao_remove_pagas(self):
+        """scope='todas' não deve remover instâncias pagas."""
+        self.t1.is_paid = True
+        self.t1.save()
+        self.client.delete(
+            self._delete_url(self.t2.pk),
+            {'scope': 'todas'},
+            format='json',
+        )
+        self.assertTrue(Transaction.objects.filter(pk=self.t1.pk).exists())
+
+    # --- validação de escopo ---
+
+    def test_delete_escopo_invalido_retorna_400(self):
+        """Escopo inválido deve retornar 400."""
+        response = self.client.delete(
+            self._delete_url(self.t1.pk),
+            {'scope': 'invalido'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_sem_escopo_retorna_400(self):
+        """Omitir o campo scope deve retornar 400."""
+        response = self.client.delete(
+            self._delete_url(self.t1.pk),
+            {},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_esta_e_futuras_sem_regra_retorna_400(self):
+        """Transação avulsa com scope='esta_e_futuras' deve retornar 400."""
+        t_avulsa = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            date=datetime.date(2026, 6, 1),
+        )
+        response = self.client.delete(
+            self._delete_url(t_avulsa.pk),
+            {'scope': 'esta_e_futuras'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_delete_todas_sem_regra_retorna_400(self):
+        """Transação avulsa com scope='todas' deve retornar 400."""
+        t_avulsa = make_transaction(
+            self.user, self.relative, self.account, self.category,
+            date=datetime.date(2026, 6, 1),
+        )
+        response = self.client.delete(
+            self._delete_url(t_avulsa.pk),
+            {'scope': 'todas'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
