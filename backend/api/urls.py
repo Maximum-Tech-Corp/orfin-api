@@ -11,4 +11,7 @@ urlpatterns = [
 
     # Transações e recorrência
     path('', include('backend.api.transactions.urls')),
+
+    # Cartões de crédito e faturas
+    path('', include('backend.api.credit_cards.urls')),
 ]

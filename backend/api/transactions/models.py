@@ -38,7 +38,7 @@ class RecurringRule(models.Model):
         related_name='recurring_rules',
         verbose_name='Perfil'
     )
-    # Conta associada à recorrência (null quando for transação de cartão — Parte 5)
+    # Conta associada à recorrência (null quando for recorrência de cartão)
     account = models.ForeignKey(
         'api.Account',
         on_delete=models.SET_NULL,
@@ -47,7 +47,15 @@ class RecurringRule(models.Model):
         related_name='recurring_rules',
         verbose_name='Conta'
     )
-    # credit_card será adicionado na Parte 5 (CreditCard + Invoice)
+    # Cartão de crédito associado à recorrência (null quando for recorrência de conta)
+    credit_card = models.ForeignKey(
+        'api.CreditCard',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='recurring_rules',
+        verbose_name='Cartão de Crédito',
+    )
     category = models.ForeignKey(
         'api.Category',
         on_delete=models.SET_NULL,
@@ -143,7 +151,7 @@ class Transaction(models.Model):
     A lógica de reversão de saldo antes do delete é responsabilidade da view (Parte 2).
 
     Constraints importantes:
-    - account XOR invoice: nunca os dois preenchidos ao mesmo tempo (invoice será adicionado na Parte 5)
+    - account XOR invoice: nunca os dois preenchidos ao mesmo tempo
     - category é obrigatória para receita e despesa; opcional para transferencia
     - amount é sempre positivo; o tipo determina a direção
     """
@@ -168,7 +176,7 @@ class Transaction(models.Model):
         related_name='transactions',
         verbose_name='Perfil'
     )
-    # Null quando for transação de cartão de crédito (invoice preenchido) — constraint Parte 5
+    # Null quando for transação de cartão de crédito (invoice preenchido)
     account = models.ForeignKey(
         'api.Account',
         on_delete=models.SET_NULL,
@@ -177,7 +185,15 @@ class Transaction(models.Model):
         related_name='transactions',
         verbose_name='Conta'
     )
-    # invoice (FK → Invoice) será adicionado na Parte 5 (CreditCard + Invoice)
+    # Fatura do cartão à qual esta transação pertence (null = transação de conta)
+    invoice = models.ForeignKey(
+        'api.Invoice',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transactions',
+        verbose_name='Fatura',
+    )
     category = models.ForeignKey(
         'api.Category',
         on_delete=models.SET_NULL,
@@ -241,6 +257,7 @@ class Transaction(models.Model):
         """
         Valida regras de negócio da Transaction:
         - amount deve ser positivo
+        - account XOR invoice: nunca os dois preenchidos simultaneamente
         - category é obrigatória para receita e despesa
         - campos de parcelamento devem ser consistentes entre si
         """
@@ -253,7 +270,13 @@ class Transaction(models.Model):
             except InvalidOperation:
                 pass  # Validação de formato fica a cargo do Django/serializer
 
-        # Categoria obrigatória para receita e despesa (opcional para transferencia)
+        # Constraint XOR: account e invoice nunca preenchidos ao mesmo tempo
+        if self.account_id and self.invoice_id:
+            raise ValidationError(
+                'Uma transação não pode ter conta e fatura preenchidas ao mesmo tempo.'
+            )
+
+        # Categoria obrigatória para receita e despesa (opcional para transferencia e cartão)
         if self.type in ('receita', 'despesa') and not self.category_id:
             raise ValidationError({
                 'category': 'Categoria é obrigatória para receitas e despesas.'
@@ -303,5 +326,9 @@ class Transaction(models.Model):
             # Índice para gerenciamento de parcelamentos
             models.Index(
                 fields=['installment_group_id'], name='idx_transaction_installment'
+            ),
+            # Índice para consultas por fatura (Parte 5+)
+            models.Index(
+                fields=['invoice'], name='idx_transaction_invoice'
             ),
         ]

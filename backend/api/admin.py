@@ -5,6 +5,7 @@ from .users.models import User
 from .accounts.models import Account
 from .categories.models import Category
 from .transactions.models import Transaction, RecurringRule
+from .credit_cards.models import CreditCard, Invoice
 
 
 @admin.register(User)
@@ -93,3 +94,32 @@ class RecurringRuleAdmin(admin.ModelAdmin):
     search_fields = ['description', 'user__email', 'user__first_name']
     ordering = ['-created_at']
     readonly_fields = ['id', 'created_at', 'updated_at']
+
+
+@admin.register(CreditCard)
+class CreditCardAdmin(admin.ModelAdmin):
+    """
+    Admin para o modelo CreditCard.
+    """
+    list_display = [
+        'name', 'user', 'limit', 'closing_day', 'due_day', 'is_archived', 'created_at'
+    ]
+    list_filter = ['is_archived', 'created_at']
+    search_fields = ['name', 'user__email', 'user__first_name']
+    ordering = ['-created_at']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):
+    """
+    Admin para o modelo Invoice.
+    """
+    list_display = [
+        'credit_card', 'reference_month', 'reference_year',
+        'status', 'due_date', 'total_amount', 'paid_at', 'created_at'
+    ]
+    list_filter = ['status', 'reference_year', 'created_at']
+    search_fields = ['credit_card__name', 'credit_card__user__email']
+    ordering = ['-reference_year', '-reference_month']
+    readonly_fields = ['id', 'total_amount', 'paid_at', 'paid_via_account', 'created_at', 'updated_at']

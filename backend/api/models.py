@@ -6,3 +6,4 @@ from .relatives.models import Relative
 from .accounts.models import Account
 from .categories.models import Category
 from .transactions.models import Transaction, RecurringRule
+from .credit_cards.models import CreditCard, Invoice
