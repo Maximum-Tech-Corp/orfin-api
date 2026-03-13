@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from backend.api.accounts.models import Account
+from backend.api.credit_cards.models import CreditCard
 from backend.api.relatives.models import Relative
 
 from .models import RecurringRule, Transaction
@@ -10,12 +11,14 @@ class TransactionListSerializer(serializers.ModelSerializer):
     """
     Serializer compacto para listagem de transações.
     Expõe campos essenciais para o dashboard e extratos, sem dados aninhados pesados.
-    Inclui transfer_direction para o frontend distinguir entrada/saída de transferências.
+    Inclui transfer_direction para o frontend distinguir entrada/saída de transferências
+    e invoice para identificar transações de cartão.
     """
 
-    # Campos de exibição para evitar requisições adicionais na lista
-    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
-    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    account_name = serializers.CharField(
+        source='account.name', read_only=True, allow_null=True)
+    category_name = serializers.CharField(
+        source='category.name', read_only=True, allow_null=True)
 
     class Meta:
         model = Transaction
@@ -31,6 +34,9 @@ class TransactionListSerializer(serializers.ModelSerializer):
             'account_name',
             'category',
             'category_name',
+            'invoice',
+            'installment_number',
+            'installment_total',
         ]
 
 
@@ -38,21 +44,32 @@ class TransactionSerializer(serializers.ModelSerializer):
     """
     Serializer completo para criação, edição e recuperação de transações.
 
-    Campo especial de escrita (não persiste no model diretamente):
-    - destination_account: obrigatório ao criar uma transferência; indica a conta de destino.
-      A view usa este campo para criar o par de transações atomicamente.
+    Campos especiais de escrita (não persistem no model diretamente):
+    - destination_account: obrigatório ao criar uma transferência.
+    - credit_card: obrigatório ao criar transação de cartão de crédito.
+      A view determina a invoice correta via get_or_create_invoice().
+      Com installment_total > 1 cria N transações parceladas.
+
+    invoice é determinado automaticamente pela view — não editável pelo usuário.
     """
 
-    # Campos de exibição read-only para contexto sem requisições extras
-    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
-    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    account_name = serializers.CharField(
+        source='account.name', read_only=True, allow_null=True)
+    category_name = serializers.CharField(
+        source='category.name', read_only=True, allow_null=True)
     recurring_rule_description = serializers.CharField(
         source='recurring_rule.description', read_only=True, allow_null=True
     )
 
-    # Campo write-only usado apenas na criação de transferências
     destination_account = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
+    credit_card = serializers.PrimaryKeyRelatedField(
+        queryset=CreditCard.objects.all(),
         write_only=True,
         required=False,
         allow_null=True,
@@ -64,8 +81,10 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'user',
             'relative',
+            'invoice',
             'transfer_pair_id',
             'transfer_direction',
+            'installment_group_id',
             'created_at',
             'updated_at',
             'account_name',
@@ -76,7 +95,6 @@ class TransactionSerializer(serializers.ModelSerializer):
     def validate_amount(self, value):
         """
         Garante que o valor da transação seja sempre positivo.
-        A direção do fluxo é determinada pelo campo `type`.
         """
         if value <= 0:
             raise serializers.ValidationError('O valor deve ser positivo.')
@@ -86,19 +104,58 @@ class TransactionSerializer(serializers.ModelSerializer):
         """
         Validações que dependem de múltiplos campos:
         - category obrigatória para receita e despesa
-        - campos de parcelamento consistentes
-        - destination_account obrigatório e diferente da origem para transferências novas
-        - destination_account deve pertencer ao mesmo usuário
+        - credit_card e account mutuamente exclusivos no create
+        - credit_card deve pertencer ao usuário
+        - transferências não podem ser de cartão
+        - installment_number não pode ser enviado pelo usuário (auto-gerado)
+        - destination_account obrigatório/único para transferências novas
+        - campos de parcelamento consistentes (fora do fluxo de cartão)
         """
-        transaction_type = data.get('type') or (self.instance and self.instance.type)
-        category = data.get('category') if 'category' in data else (self.instance and self.instance.category)
+        transaction_type = data.get('type') or (
+            self.instance and self.instance.type)
+        category = data.get('category') if 'category' in data else (
+            self.instance and self.instance.category)
+        credit_card = data.get('credit_card')
 
         if transaction_type in ('receita', 'despesa') and not category:
             raise serializers.ValidationError({
                 'category': 'Categoria é obrigatória para receitas e despesas.'
             })
 
-        # Validações específicas para criação de transferência (não se aplica ao update)
+        # Validações específicas para criação de transação de cartão
+        if credit_card and not self.instance:
+            if transaction_type == 'transferencia':
+                raise serializers.ValidationError({
+                    'credit_card': 'Transferências não podem ser realizadas pelo cartão de crédito.'
+                })
+
+            if data.get('account'):
+                raise serializers.ValidationError({
+                    'credit_card': 'Informe apenas a conta bancária ou o cartão de crédito, não ambos.'
+                })
+
+            user = self.context['request'].user
+            if not CreditCard.objects.filter(pk=credit_card.pk, user=user).exists():
+                raise serializers.ValidationError({
+                    'credit_card': 'Cartão não encontrado ou não pertence ao usuário.'
+                })
+
+            # installment_number é auto-gerado — não deve vir do usuário
+            if data.get('installment_number') is not None:
+                raise serializers.ValidationError({
+                    'installment_number': (
+                        'installment_number é gerado automaticamente. '
+                        'Informe apenas installment_total para parcelar.'
+                    )
+                })
+
+            installment_total = data.get('installment_total')
+            if installment_total is not None and installment_total < 1:
+                raise serializers.ValidationError({
+                    'installment_total': 'O número de parcelas deve ser pelo menos 1.'
+                })
+
+        # Validações específicas para criação de transferência
         if transaction_type == 'transferencia' and not self.instance:
             destination_account = data.get('destination_account')
             if not destination_account:
@@ -112,46 +169,50 @@ class TransactionSerializer(serializers.ModelSerializer):
                     'destination_account': 'Conta de destino deve ser diferente da conta de origem.'
                 })
 
-            # Garante que a conta de destino pertence ao usuário autenticado
             user = self.context['request'].user
             if not Account.objects.filter(pk=destination_account.pk, user=user).exists():
                 raise serializers.ValidationError({
                     'destination_account': 'Conta de destino não encontrada ou não pertence ao usuário.'
                 })
 
-        # Valida consistência dos campos de parcelamento
-        installment_number = data.get('installment_number')
-        installment_total = data.get('installment_total')
-        installment_group_id = data.get('installment_group_id')
+        # Valida consistência dos campos de parcelamento apenas fora do fluxo de cartão
+        # (no fluxo de cartão, installment_number e installment_group_id são auto-gerados)
+        if not credit_card or self.instance:
+            installment_number = data.get('installment_number')
+            installment_total = data.get('installment_total')
+            installment_group_id = data.get('installment_group_id')
 
-        if (installment_number is None) != (installment_total is None):
-            raise serializers.ValidationError(
-                'installment_number e installment_total devem ser informados juntos.'
-            )
+            if (installment_number is None) != (installment_total is None):
+                raise serializers.ValidationError(
+                    'installment_number e installment_total devem ser informados juntos.'
+                )
 
-        if installment_group_id and installment_number is None:
-            raise serializers.ValidationError(
-                'installment_number e installment_total são obrigatórios quando installment_group_id é informado.'
-            )
+            if installment_group_id and installment_number is None:  # pragma: no cover
+                raise serializers.ValidationError(
+                    'installment_number e installment_total são obrigatórios quando installment_group_id é informado.'
+                )
 
         return data
 
     def create(self, validated_data):
         """
         Associa automaticamente o usuário autenticado e o perfil do header X-Relative-Id.
-        destination_account é extraído pela view antes de chamar save() — não chega aqui.
+        destination_account e credit_card são extraídos pela view antes do save().
         """
         validated_data['user'] = self.context['request'].user
 
         relative_id = self.context['request'].headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=validated_data['user'])
+                relative = Relative.objects.get(
+                    id=relative_id, user=validated_data['user'])
                 validated_data['relative'] = relative
             except Relative.DoesNotExist:
-                raise serializers.ValidationError('Perfil não encontrado ou não pertence ao usuário.')
+                raise serializers.ValidationError(
+                    'Perfil não encontrado ou não pertence ao usuário.')
         else:
-            raise serializers.ValidationError('Header X-Relative-Id é obrigatório.')
+            raise serializers.ValidationError(
+                'Header X-Relative-Id é obrigatório.')
 
         return super().create(validated_data)
 
@@ -161,8 +222,10 @@ class RecurringRuleListSerializer(serializers.ModelSerializer):
     Serializer compacto para listagem de regras de recorrência.
     """
 
-    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
-    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    account_name = serializers.CharField(
+        source='account.name', read_only=True, allow_null=True)
+    category_name = serializers.CharField(
+        source='category.name', read_only=True, allow_null=True)
 
     class Meta:
         model = RecurringRule
@@ -186,11 +249,12 @@ class RecurringRuleListSerializer(serializers.ModelSerializer):
 class RecurringRuleSerializer(serializers.ModelSerializer):
     """
     Serializer completo para criação e edição de regras de recorrência.
-    A lógica de geração das instâncias de Transaction (Parte 4) será feita nas views.
     """
 
-    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
-    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    account_name = serializers.CharField(
+        source='account.name', read_only=True, allow_null=True)
+    category_name = serializers.CharField(
+        source='category.name', read_only=True, allow_null=True)
 
     class Meta:
         model = RecurringRule
@@ -212,7 +276,8 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         """
         end_date = data.get('end_date')
         occurrences_count = data.get('occurrences_count')
-        start_date = data.get('start_date') or (self.instance and self.instance.start_date)
+        start_date = data.get('start_date') or (
+            self.instance and self.instance.start_date)
 
         if end_date and occurrences_count:
             raise serializers.ValidationError(
@@ -235,11 +300,14 @@ class RecurringRuleSerializer(serializers.ModelSerializer):
         relative_id = self.context['request'].headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=validated_data['user'])
+                relative = Relative.objects.get(
+                    id=relative_id, user=validated_data['user'])
                 validated_data['relative'] = relative
             except Relative.DoesNotExist:
-                raise serializers.ValidationError('Perfil não encontrado ou não pertence ao usuário.')
+                raise serializers.ValidationError(
+                    'Perfil não encontrado ou não pertence ao usuário.')
         else:
-            raise serializers.ValidationError('Header X-Relative-Id é obrigatório.')
+            raise serializers.ValidationError(
+                'Header X-Relative-Id é obrigatório.')
 
         return super().create(validated_data)

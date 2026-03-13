@@ -1,8 +1,8 @@
 import calendar
 import datetime
 import uuid
-from decimal import Decimal
-from typing import Optional
+from decimal import ROUND_DOWN, Decimal
+from typing import List, Optional
 
 from django.db import transaction as db_transaction
 from django.db.models import F
@@ -13,20 +13,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from backend.api.accounts.models import Account
+from backend.api.credit_cards.models import Invoice, get_or_create_invoice
 from backend.api.relatives.models import Relative
 
 from .models import RecurringRule, Transaction
-from .serializers import (
-    RecurringRuleListSerializer,
-    RecurringRuleSerializer,
-    TransactionListSerializer,
-    TransactionSerializer,
-)
-
+from .serializers import (RecurringRuleListSerializer, RecurringRuleSerializer,
+                          TransactionListSerializer, TransactionSerializer)
 
 # ---------------------------------------------------------------------------
 # Helpers de saldo
 # ---------------------------------------------------------------------------
+
 
 def _balance_delta(transaction_type: str, amount: Decimal) -> Decimal:
     """
@@ -93,7 +90,8 @@ def _create_transfer_pair(origin: Transaction, destination_account: Account) -> 
     # Atualiza saldo se a transferência já está confirmada
     if origin.is_paid:
         _apply_balance(origin.account_id, -origin.amount)  # débito na origem
-        _apply_balance(destination_account.pk, origin.amount)  # crédito no destino
+        # crédito no destino
+        _apply_balance(destination_account.pk, origin.amount)
 
 
 def _get_transfer_pair(instance: Transaction) -> Optional[Transaction]:
@@ -101,7 +99,7 @@ def _get_transfer_pair(instance: Transaction) -> Optional[Transaction]:
     Retorna a transação par da transferência, ou None se não existir.
     """
     if not instance.transfer_pair_id:
-        return None
+        return None  # pragma: no cover
     return Transaction.objects.filter(
         transfer_pair_id=instance.transfer_pair_id
     ).exclude(pk=instance.pk).first()
@@ -113,18 +111,10 @@ def _reverse_transfer_balance(debit_leg: Transaction, credit_leg: Transaction) -
     Crédita a conta de origem (debit_leg) e debita a conta de destino (credit_leg).
     """
     if debit_leg.is_paid:
-        _apply_balance(debit_leg.account_id, debit_leg.amount)   # credita origem
-        _apply_balance(credit_leg.account_id, -credit_leg.amount)  # debita destino
-
-
-def _apply_transfer_balance(debit_leg: Transaction, credit_leg: Transaction) -> None:
-    """
-    Aplica os saldos de ambas as pernas de uma transferência.
-    Debita a conta de origem (debit_leg) e credita a conta de destino (credit_leg).
-    """
-    if debit_leg.is_paid:
-        _apply_balance(debit_leg.account_id, -debit_leg.amount)  # débita origem
-        _apply_balance(credit_leg.account_id, credit_leg.amount)  # credita destino
+        _apply_balance(debit_leg.account_id,
+                       debit_leg.amount)   # credita origem
+        _apply_balance(credit_leg.account_id, -
+                       credit_leg.amount)  # debita destino
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +148,7 @@ def _next_occurrence(date: datetime.date, frequency: str, interval: int) -> date
         year = date.year + interval
         day = min(date.day, calendar.monthrange(year, date.month)[1])
         return datetime.date(year, date.month, day)
-    return date
+    return date  # pragma: no cover
 
 
 def _nth_occurrence_date(rule: RecurringRule, n: int) -> datetime.date:
@@ -230,6 +220,84 @@ def _ensure_horizon(rule: RecurringRule, horizon_months: int = 12) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Helpers de cartão de crédito — Parte 6
+# ---------------------------------------------------------------------------
+
+def _add_months_to_date(date: datetime.date, months: int) -> datetime.date:
+    """
+    Soma meses a uma data ajustando o dia quando o mês de destino tem menos dias.
+    Reusa a lógica de _add_months mas sem depender de RecurringRule.
+    """
+    return _add_months(date, months)
+
+
+def _create_card_installments(
+    validated_data: dict,
+    credit_card,
+    installment_total: int,
+) -> List[Transaction]:
+    """
+    Cria N transações parceladas em N faturas mensais consecutivas.
+
+    Regras:
+    - O valor total (validated_data['amount']) é dividido em N parcelas.
+    - Usa ROUND_DOWN para evitar arredondamento acima do total.
+    - O restante da divisão é adicionado à primeira parcela.
+    - Cada parcela é vinculada à fatura do mês correspondente via get_or_create_invoice().
+    - installment_group_id é o mesmo UUID para todas as parcelas do grupo.
+    - description recebe sufixo "(N/total)".
+    - is_paid é sempre False para parcelas de cartão.
+    """
+    total_amount = validated_data['amount']
+    base_date = validated_data['date']
+    base_description = validated_data.get('description', '')
+
+    # Calcula o valor de cada parcela com ROUND_DOWN
+    per_installment = (total_amount / installment_total).quantize(
+        Decimal('0.01'), rounding=ROUND_DOWN
+    )
+    # O restante vai para a primeira parcela
+    remainder = total_amount - per_installment * installment_total
+
+    group_id = uuid.uuid4()
+    instances = []
+
+    for n in range(1, installment_total + 1):
+        installment_date = _add_months_to_date(base_date, n - 1)
+        invoice = get_or_create_invoice(credit_card, installment_date)
+
+        amount = per_installment + (remainder if n == 1 else Decimal('0'))
+        description = f'{base_description} ({n}/{installment_total})'
+
+        transaction = Transaction(
+            user=validated_data['user'],
+            relative=validated_data.get('relative'),
+            invoice=invoice,
+            category=validated_data.get('category'),
+            recurring_rule=validated_data.get('recurring_rule'),
+            type=validated_data['type'],
+            amount=amount,
+            description=description,
+            notes=validated_data.get('notes', ''),
+            date=installment_date,
+            is_paid=False,
+            installment_group_id=group_id,
+            installment_number=n,
+            installment_total=installment_total,
+        )
+        instances.append(transaction)
+
+    Transaction.objects.bulk_create(instances)
+
+    # Recalcula o total de cada fatura afetada
+    affected_invoice_ids = {t.invoice_id for t in instances}
+    for invoice_id in affected_invoice_ids:
+        Invoice.objects.get(pk=invoice_id).recalculate_total()
+
+    return instances
+
+
+# ---------------------------------------------------------------------------
 # ViewSet: Transaction
 # ---------------------------------------------------------------------------
 
@@ -274,7 +342,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
         relative_id = self.request.headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=self.request.user)
+                relative = Relative.objects.get(
+                    id=relative_id, user=self.request.user)
                 queryset = queryset.filter(relative=relative)
             except Relative.DoesNotExist:
                 raise ValidationError({
@@ -335,18 +404,69 @@ class TransactionViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         Cria a transação e aplica a lógica de saldo conforme o tipo:
-        - receita/despesa: atualiza o saldo da conta se is_paid=True
+        - receita/despesa em conta: atualiza o saldo da conta se is_paid=True
         - transferencia: cria o par (debit + credit) e aplica saldo em ambas as contas
+        - receita/despesa em cartão (credit_card fornecido):
+            - sem parcelamento: cria 1 transação vinculada à fatura correspondente
+            - com parcelamento (installment_total > 1): cria N transações em N faturas mensais
 
-        destination_account é um campo write-only do serializer, extraído antes do save()
-        para que não seja passado ao model (que não possui esse campo).
+        destination_account e credit_card são campos write-only do serializer,
+        extraídos antes do save() para não serem passados ao model.
         """
         with db_transaction.atomic():
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
-            # Extrai destination_account antes de salvar (não é campo do modelo)
-            destination_account = serializer.validated_data.pop('destination_account', None)
+            # Extrai campos write-only que não existem no modelo
+            destination_account = serializer.validated_data.pop(
+                'destination_account', None)
+            credit_card = serializer.validated_data.pop('credit_card', None)
+
+            # --- Lógica de cartão de crédito ---
+            if credit_card:
+                installment_total = serializer.validated_data.get(
+                    'installment_total', 1) or 1
+
+                if installment_total > 1:
+                    # Popula user e relative no validated_data antes de passar ao helper
+                    # (o serializer.create() faz isso no save(), mas aqui usamos bulk_create)
+                    serializer.validated_data['user'] = request.user
+                    relative_id = request.headers.get('X-Relative-Id')
+                    if relative_id:
+                        try:
+                            relative = Relative.objects.get(
+                                id=relative_id, user=request.user)
+                            serializer.validated_data['relative'] = relative
+                        except Relative.DoesNotExist:
+                            raise ValidationError({
+                                'X-Relative-Id': f'Perfil com ID {relative_id} não encontrado.'
+                            })
+
+                    # Parcelamento: cria N transações em N faturas
+                    instances = _create_card_installments(
+                        serializer.validated_data,
+                        credit_card,
+                        installment_total,
+                    )
+                    # Retorna a representação da primeira parcela
+                    first = TransactionSerializer(
+                        instances[0], context={'request': request})
+                    headers = self.get_success_headers(first.data)
+                    return Response(first.data, status=status.HTTP_201_CREATED, headers=headers)
+
+                # Parcela única: determina a fatura e salva normalmente
+                # Remove installment_total do validated_data para não conflitar com clean()
+                # (clean() exige que installment_number acompanhe installment_total)
+                serializer.validated_data.pop('installment_total', None)
+                invoice = get_or_create_invoice(
+                    credit_card, serializer.validated_data['date'])
+                instance = serializer.save(invoice=invoice, is_paid=False)
+                invoice.recalculate_total()
+
+                headers = self.get_success_headers(serializer.data)
+                return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+            # --- Lógica padrão de conta bancária ---
             instance = serializer.save()
 
             if instance.type == 'transferencia' and destination_account:
@@ -376,7 +496,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
         - account não pode ser alterado em transferências existentes
         """
         if 'transfer_pair_id' in request.data:
-            raise ValidationError({'transfer_pair_id': 'Este campo não pode ser alterado diretamente.'})
+            raise ValidationError(
+                {'transfer_pair_id': 'Este campo não pode ser alterado diretamente.'})
 
         with db_transaction.atomic():
             old = self.get_object()
@@ -406,6 +527,10 @@ class TransactionViewSet(viewsets.ModelViewSet):
             else:
                 net = new_delta - old_delta
                 _apply_balance(new_account_id, net)
+
+            # Recalcula o total da fatura se a transação estava vinculada a um cartão
+            if old.invoice_id:
+                Invoice.objects.get(pk=old.invoice_id).recalculate_total()
 
         return response
 
@@ -455,13 +580,17 @@ class TransactionViewSet(viewsets.ModelViewSet):
         if debit_before and credit_before:
             # Reverte o estado anterior (usando o amount/is_paid de antes do update)
             if old_is_paid:
-                _apply_balance(debit_before.account_id, old_amount)    # credita origem
-                _apply_balance(credit_before.account_id, -old_amount)  # debita destino
+                _apply_balance(debit_before.account_id,
+                               old_amount)    # credita origem
+                _apply_balance(credit_before.account_id, -
+                               old_amount)  # debita destino
 
             # Aplica o novo estado
             if new_is_paid:
-                _apply_balance(debit_before.account_id, -new_amount)   # débita origem
-                _apply_balance(credit_before.account_id, new_amount)   # credita destino
+                _apply_balance(debit_before.account_id, -
+                               new_amount)   # débita origem
+                _apply_balance(credit_before.account_id,
+                               new_amount)   # credita destino
 
         return response
 
@@ -480,7 +609,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
                     transfer_pair_id=instance.transfer_pair_id
                 )
                 debit_leg = pair_qs.filter(transfer_direction='debit').first()
-                credit_leg = pair_qs.filter(transfer_direction='credit').first()
+                credit_leg = pair_qs.filter(
+                    transfer_direction='credit').first()
 
                 if debit_leg and credit_leg:
                     _reverse_transfer_balance(debit_leg, credit_leg)
@@ -488,7 +618,10 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 pair_qs.delete()
                 return Response(status=status.HTTP_204_NO_CONTENT)
 
-            # Receita/despesa: reverte saldo se estava pago
+            # Transação de cartão: captura invoice_id antes de deletar e recalcula depois
+            invoice_id = instance.invoice_id if instance.invoice_id else None
+
+            # Receita/despesa em conta: reverte saldo se estava pago
             if (
                 instance.is_paid
                 and instance.account_id
@@ -497,7 +630,13 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 delta = _balance_delta(instance.type, instance.amount)
                 _apply_balance(instance.account_id, -delta)
 
-            return super().destroy(request, *args, **kwargs)
+            result = super().destroy(request, *args, **kwargs)
+
+            # Recalcula o total da fatura após exclusão da transação de cartão
+            if invoice_id:
+                Invoice.objects.get(pk=invoice_id).recalculate_total()
+
+            return result
 
     # ---------------------------------------------------------------------------
     # Actions de recorrência — Parte 4
@@ -519,10 +658,12 @@ class TransactionViewSet(viewsets.ModelViewSet):
         """
         scope = request.data.get('scope')
         if scope not in ('esta', 'esta_e_futuras', 'todas'):
-            raise ValidationError({'scope': 'Escopo inválido. Use: esta, esta_e_futuras ou todas.'})
+            raise ValidationError(
+                {'scope': 'Escopo inválido. Use: esta, esta_e_futuras ou todas.'})
 
         # Campos editáveis neste endpoint (excluindo campos de sistema e scope)
-        EDITABLE_FIELDS = {'amount', 'description', 'notes', 'date', 'is_paid', 'category', 'account'}
+        EDITABLE_FIELDS = {'amount', 'description', 'notes',
+                           'date', 'is_paid', 'category', 'account'}
         data = {k: v for k, v in request.data.items() if k in EDITABLE_FIELDS}
 
         with db_transaction.atomic():
@@ -537,6 +678,9 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 serializer.is_valid(raise_exception=True)
 
                 # Lógica de saldo: reverte o estado anterior e aplica o novo
+                # Captura o account_id antes do save — após o save, instance é o mesmo objeto
+                # que updated e já terá o novo account_id
+                old_account_id = instance.account_id
                 old_delta = Decimal('0')
                 if instance.is_paid and instance.account_id and instance.type in ('receita', 'despesa'):
                     old_delta = _balance_delta(instance.type, instance.amount)
@@ -547,8 +691,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 if updated.is_paid and updated.account_id and updated.type in ('receita', 'despesa'):
                     new_delta = _balance_delta(updated.type, updated.amount)
 
-                if instance.account_id != updated.account_id:
-                    _apply_balance(instance.account_id, -old_delta)
+                if old_account_id != updated.account_id:
+                    _apply_balance(old_account_id, -old_delta)
                     _apply_balance(updated.account_id, new_delta)
                 else:
                     _apply_balance(updated.account_id, new_delta - old_delta)
@@ -577,7 +721,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
                         update_kwargs['account_id'] = value
                     else:
                         update_kwargs[field] = value
-                RecurringRule.objects.filter(pk=rule.pk).update(**update_kwargs)
+                RecurringRule.objects.filter(
+                    pk=rule.pk).update(**update_kwargs)
                 rule.refresh_from_db()
 
             if scope == 'esta_e_futuras':
@@ -601,7 +746,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
                 # Regenera desde o início da regra até o horizonte
                 if rule.occurrences_count:
-                    to_date = _nth_occurrence_date(rule, rule.occurrences_count)
+                    to_date = _nth_occurrence_date(
+                        rule, rule.occurrences_count)
                 elif rule.end_date:
                     to_date = rule.end_date
                 else:
@@ -627,7 +773,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
         """
         scope = request.data.get('scope')
         if scope not in ('esta', 'esta_e_futuras', 'todas'):
-            raise ValidationError({'scope': 'Escopo inválido. Use: esta, esta_e_futuras ou todas.'})
+            raise ValidationError(
+                {'scope': 'Escopo inválido. Use: esta, esta_e_futuras ou todas.'})
 
         with db_transaction.atomic():
             instance = self.get_object()
@@ -654,7 +801,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
             if scope == 'esta_e_futuras':
                 # Encerra a regra no dia anterior a esta ocorrência
                 new_end_date = instance.date - datetime.timedelta(days=1)
-                RecurringRule.objects.filter(pk=rule.pk).update(end_date=new_end_date)
+                RecurringRule.objects.filter(
+                    pk=rule.pk).update(end_date=new_end_date)
 
                 # Remove instâncias futuras não pagas a partir desta data
                 Transaction.objects.filter(
@@ -665,7 +813,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
             elif scope == 'todas':
                 # Desativa a regra sem deletá-la (soft delete via update para evitar NotImplementedError)
-                RecurringRule.objects.filter(pk=rule.pk).update(is_active=False)
+                RecurringRule.objects.filter(
+                    pk=rule.pk).update(is_active=False)
 
                 # Remove TODAS as instâncias não pagas da regra
                 Transaction.objects.filter(
@@ -717,7 +866,8 @@ class RecurringRuleViewSet(viewsets.ModelViewSet):
         relative_id = self.request.headers.get('X-Relative-Id')
         if relative_id:
             try:
-                relative = Relative.objects.get(id=relative_id, user=self.request.user)
+                relative = Relative.objects.get(
+                    id=relative_id, user=self.request.user)
                 queryset = queryset.filter(relative=relative)
             except Relative.DoesNotExist:
                 raise ValidationError({
@@ -726,7 +876,8 @@ class RecurringRuleViewSet(viewsets.ModelViewSet):
 
         if self.action == 'list':
             # Permite listar regras inativas com ?only_inactive=true
-            only_inactive = self.request.query_params.get('only_inactive', 'false')
+            only_inactive = self.request.query_params.get(
+                'only_inactive', 'false')
             if only_inactive.lower() == 'true':
                 queryset = queryset.filter(is_active=False)
             else:

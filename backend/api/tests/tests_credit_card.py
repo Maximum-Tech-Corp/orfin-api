@@ -490,6 +490,24 @@ class CreditCardAPITest(BaseAuthenticatedTestCase):
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_create_relative_id_invalido_retorna_400(self):
+        """
+        POST /credit-cards/ com X-Relative-Id com ID inexistente deve retornar 400.
+        Cobre o bloco except Relative.DoesNotExist em CreditCardSerializer.create().
+        """
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = '999999'
+        response = self.client.post(self.list_url, self._valid_data())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_relative_id_invalido_retorna_400(self):
+        """
+        GET /credit-cards/ com X-Relative-Id com ID inexistente deve retornar 400.
+        Cobre o bloco except Relative.DoesNotExist em CreditCardViewSet.get_queryset().
+        """
+        self.client.defaults['HTTP_X_RELATIVE_ID'] = '999999'
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 # ===========================================================================
 # TESTES DE API — Invoice (retrieve)
@@ -631,3 +649,145 @@ class TransactionXORConstraintTest(BaseAuthenticatedTestCase):
             is_paid=False,
         )
         self.assertIsNotNone(t.pk)
+
+
+# ===========================================================================
+# TESTES DE API — Invoice pay (Parte 7)
+# ===========================================================================
+
+class InvoicePayAPITest(BaseAuthenticatedTestCase):
+    """
+    Testes de integração para o endpoint POST /invoices/{id}/pay/.
+    Cobre pagamento de fatura, débito de saldo e validações de negócio.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.card = make_credit_card(self.user, self.relative, closing_day=10, due_day=15)
+        # Fatura fechada com total de R$ 350,00
+        self.invoice = make_invoice(
+            self.card, 1, 2026, status='fechada', total_amount=Decimal('350.00')
+        )
+        # Conta bancária com saldo suficiente para o pagamento
+        self.account = Account.objects.create(
+            user=self.user,
+            relative=self.relative,
+            bank_name='Banco Teste',
+            name='Conta Corrente',
+            account_type='corrente',
+            color='#0000FF',
+            balance=Decimal('1000.00'),
+        )
+
+    def _pay_url(self, invoice_pk):
+        return reverse('invoice-pay', args=[invoice_pk])
+
+    # --- Pagamento com sucesso ---
+
+    def test_pay_retorna_200(self):
+        """POST /invoices/{id}/pay/ com conta válida deve retornar 200."""
+        response = self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_pay_atualiza_status_para_paga(self):
+        """Após pagamento, o status da fatura deve ser 'paga'."""
+        self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, 'paga')
+
+    def test_pay_define_paid_at(self):
+        """Após pagamento, paid_at deve estar preenchido."""
+        self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.invoice.refresh_from_db()
+        self.assertIsNotNone(self.invoice.paid_at)
+
+    def test_pay_define_paid_via_account(self):
+        """Após pagamento, paid_via_account deve apontar para a conta usada."""
+        self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.paid_via_account, self.account)
+
+    def test_pay_debita_saldo_da_conta(self):
+        """Pagamento deve debitar total_amount do saldo da conta."""
+        self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.balance, Decimal('650.00'))  # 1000 - 350
+
+    def test_pay_retorna_campos_da_fatura(self):
+        """Resposta do pagamento deve incluir campos atualizados da fatura."""
+        response = self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.assertEqual(response.data['status'], 'paga')
+        self.assertIsNotNone(response.data['paid_at'])
+        self.assertEqual(response.data['paid_via_account'], self.account.pk)
+
+    def test_pay_fatura_aberta_retorna_200(self):
+        """Fatura com status 'aberta' também pode ser paga diretamente."""
+        invoice_aberta = make_invoice(
+            self.card, 2, 2026, status='aberta', total_amount=Decimal('100.00')
+        )
+        response = self.client.post(
+            self._pay_url(invoice_aberta.pk), {'account': self.account.pk}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        invoice_aberta.refresh_from_db()
+        self.assertEqual(invoice_aberta.status, 'paga')
+
+    # --- Validações ---
+
+    def test_pay_fatura_ja_paga_retorna_400(self):
+        """POST em fatura já paga deve retornar 400."""
+        invoice_paga = make_invoice(
+            self.card, 3, 2026, status='paga', total_amount=Decimal('200.00')
+        )
+        response = self.client.post(
+            self._pay_url(invoice_paga.pk), {'account': self.account.pk}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('paga', str(response.data).lower())
+
+    def test_pay_sem_account_retorna_400(self):
+        """POST sem campo 'account' deve retornar 400."""
+        response = self.client.post(self._pay_url(self.invoice.pk), {})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('account', str(response.data).lower())
+
+    def test_pay_conta_de_outro_usuario_retorna_400(self):
+        """POST com conta de outro usuário deve retornar 400."""
+        outro_user = self.create_additional_user('2')
+        outro_relative = outro_user.relatives.first()
+        conta_alheia = Account.objects.create(
+            user=outro_user,
+            relative=outro_relative,
+            bank_name='Banco Alheio',
+            name='Conta Alheia',
+            account_type='corrente',
+            color='#FF0000',
+            balance=Decimal('500.00'),
+        )
+        response = self.client.post(
+            self._pay_url(self.invoice.pk), {'account': conta_alheia.pk}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('conta', str(response.data).lower())
+
+    def test_pay_conta_inexistente_retorna_400(self):
+        """POST com account_id inexistente deve retornar 400."""
+        response = self.client.post(self._pay_url(self.invoice.pk), {'account': 999999})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pay_fatura_de_outro_usuario_retorna_404(self):
+        """POST em fatura de outro usuário deve retornar 404."""
+        outro_user = self.create_additional_user('2')
+        outro_relative = outro_user.relatives.first()
+        outro_card = make_credit_card(outro_user, outro_relative)
+        invoice_alheia = make_invoice(outro_card, 3, 2026, status='fechada', total_amount=Decimal('100.00'))
+        response = self.client.post(
+            self._pay_url(invoice_alheia.pk), {'account': self.account.pk}
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_pay_sem_autenticacao_retorna_401(self):
+        """POST sem autenticação deve retornar 401."""
+        self.unauthenticate()
+        response = self.client.post(self._pay_url(self.invoice.pk), {'account': self.account.pk})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

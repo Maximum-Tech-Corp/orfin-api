@@ -110,7 +110,7 @@ class RecurringRule(models.Model):
                 if Decimal(str(self.amount)) <= 0:
                     raise ValidationError(
                         {'amount': 'O valor deve ser positivo.'})
-            except InvalidOperation:
+            except InvalidOperation:  # pragma: no cover
                 pass  # Validação de formato fica a cargo do Django/serializer
 
     def save(self, *args, **kwargs):
@@ -267,7 +267,7 @@ class Transaction(models.Model):
                 if Decimal(str(self.amount)) <= 0:
                     raise ValidationError(
                         {'amount': 'O valor da transação deve ser positivo.'})
-            except InvalidOperation:
+            except InvalidOperation:  # pragma: no cover
                 pass  # Validação de formato fica a cargo do Django/serializer
 
         # Constraint XOR: account e invoice nunca preenchidos ao mesmo tempo

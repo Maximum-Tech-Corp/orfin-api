@@ -1,9 +1,14 @@
+import datetime
+
+from django.db import transaction as db_transaction
+from django.db.models import F
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from backend.api.accounts.models import Account
 from backend.api.relatives.models import Relative
 
 from .models import CreditCard, Invoice
@@ -153,3 +158,50 @@ class InvoiceViewSet(
         instance.update_status()
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='pay')
+    def pay(self, request, pk=None):
+        """
+        Confirma o pagamento de uma fatura de cartão de crédito.
+        POST /api/v1/invoices/{id}/pay/
+
+        Corpo obrigatório: { "account": <id_da_conta> }
+
+        Regras de negócio:
+        - Faturas com status 'paga' retornam 400.
+        - A conta informada deve pertencer ao usuário autenticado.
+        - total_amount é debitado da conta via F() (operação atômica).
+        - paid_at, paid_via_account e status são atualizados atomicamente.
+
+        Parte 7: pagamento de fatura.
+        """
+        invoice = self.get_object()
+
+        if invoice.status == 'paga':
+            raise ValidationError({'detail': 'Esta fatura já foi paga.'})
+
+        account_id = request.data.get('account')
+        if not account_id:
+            raise ValidationError({'account': 'Informe a conta para pagamento.'})
+
+        try:
+            account = Account.objects.get(pk=account_id, user=request.user)
+        except Account.DoesNotExist:
+            raise ValidationError(
+                {'account': 'Conta não encontrada ou não pertence ao usuário.'}
+            )
+
+        with db_transaction.atomic():
+            # Debita o total da fatura da conta informada de forma atômica
+            Account.objects.filter(pk=account.pk).update(
+                balance=F('balance') - invoice.total_amount
+            )
+
+            # Marca a fatura como paga com timestamp e conta de pagamento
+            invoice.status = 'paga'
+            invoice.paid_at = datetime.datetime.now(tz=datetime.timezone.utc)
+            invoice.paid_via_account = account
+            invoice.save(update_fields=['status', 'paid_at', 'paid_via_account', 'updated_at'])
+
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data, status=status.HTTP_200_OK)
