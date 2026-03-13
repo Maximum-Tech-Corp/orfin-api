@@ -14,4 +14,7 @@ urlpatterns = [
 
     # Cartões de crédito e faturas
     path('', include('backend.api.credit_cards.urls')),
+
+    # Dashboard
+    path('', include('backend.api.dashboard.urls')),
 ]
